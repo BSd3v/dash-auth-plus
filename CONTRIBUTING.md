@@ -22,7 +22,7 @@ password:your_pypi_password
 
 2. **Changelogs and Version**
 - Check the recent commits and PRs and add anything notable to the `CHANGELOG.md` file
-- Bump the version number in `dash_auth/version.py`. Follow [Semantic Versioning 2.0.0](https://semver.org/)
+- Bump the version number in `dash_auth_plus/version.py`. Follow [Semantic Versioning 2.0.0](https://semver.org/)
 - Create a PR
 - Once reviewed, merge into main.
 
