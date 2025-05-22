@@ -2,7 +2,7 @@ from dash import Dash, Input, Output, dcc, html
 import requests
 import pytest
 
-from dash_auth import basic_auth
+from dash_auth_plus import basic_auth
 
 TEST_USERS = {
     "valid": [

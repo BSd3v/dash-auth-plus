@@ -40,7 +40,7 @@ def add_public_routes(app: Dash, routes: list):
       extensions, e.g. "js,css,svg").
     * The favicon
 
-    If you use callbacks on your public routes, you should use dash_auth's
+    If you use callbacks on your public routes, you should use dash_auth_plus's
     `public_callback` rather than the standard dash callback.
 
     :param app: Dash app

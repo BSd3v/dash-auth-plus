@@ -5,7 +5,7 @@ import requests
 from dash import Dash, Input, Output, dcc, html
 from flask import redirect
 
-from dash_auth import (
+from dash_auth_plus import (
     protected_callback,
     OIDCAuth,
 )

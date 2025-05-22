@@ -1,4 +1,4 @@
-from dash_auth import list_groups, check_groups, protected
+from dash_auth_plus import list_groups, check_groups, protected
 from flask import Flask, session
 
 

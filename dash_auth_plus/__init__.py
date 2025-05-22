@@ -8,7 +8,7 @@ try:
     from .oidc_auth import OIDCAuth, get_oauth
 except ModuleNotFoundError:
     pass
-from .version import __version__
+from .version import __version__, __plotly_dash_auth_version__
 
 
 __all__ = [
@@ -22,4 +22,5 @@ __all__ = [
     "BasicAuth",
     "OIDCAuth",
     "__version__",
+    "__plotly_dash_auth_version__"
 ]

@@ -39,7 +39,7 @@ jobs:
           name: Flake8
           command: |
             . venv/bin/activate
-            flake8 dash_auth setup.py
+            flake8 dash_auth_plus setup.py
 
       - run:
           name: Test with pytest
