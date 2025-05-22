@@ -10,8 +10,8 @@ with open('README.md', encoding='utf-8') as f:
 setup(
     name='dash_auth_plus',
     version=main_ns['__version__'],
-    author='Christopher Parmer',
-    author_email='chris@plotly.com',
+    author='Bryan Schroeder',
+    author_email='bryan.ri.schroeder@gmail.com',
     packages=['dash_auth_plus'],
     license='MIT',
     description='Dash Authorization Package.',
@@ -27,7 +27,7 @@ setup(
     },
     python_requires=">=3.8",
     include_package_data=True,
-    url='https://plotly.com/dash',
+    url='https://github.com/BSd3v',
     classifiers=[
         'Development Status :: 5 - Production/Stable',
         'Environment :: Web Environment',
