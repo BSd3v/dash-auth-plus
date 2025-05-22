@@ -6,7 +6,7 @@ from typing import Optional, Union, TYPE_CHECKING
 import dash
 from authlib.integrations.base_client import OAuthError
 from authlib.integrations.flask_client import OAuth
-from dash_auth.auth import Auth
+from dash_auth_plus.auth import Auth
 from flask import Response, redirect, request, session, url_for
 from werkzeug.routing import Map, Rule
 

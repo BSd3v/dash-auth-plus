@@ -1,7 +1,7 @@
 from dash import Dash, Input, Output, dcc, html
 import requests
 
-from dash_auth import BasicAuth, add_public_routes, protected
+from dash_auth_plus import BasicAuth, add_public_routes, protected
 
 
 TEST_USERS = {

@@ -1,18 +1,18 @@
 from setuptools import setup
 
 main_ns = {}
-with open('dash_auth/version.py', encoding='utf-8') as f:
+with open('dash_auth_plus/version.py', encoding='utf-8') as f:
     exec(f.read(), main_ns)
 
 with open('README.md', encoding='utf-8') as f:
     long_description = f.read()
 
 setup(
-    name='dash_auth',
+    name='dash_auth_plus',
     version=main_ns['__version__'],
     author='Christopher Parmer',
     author_email='chris@plotly.com',
-    packages=['dash_auth'],
+    packages=['dash_auth_plus'],
     license='MIT',
     description='Dash Authorization Package.',
     long_description=long_description,
