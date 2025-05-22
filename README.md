@@ -1,16 +1,8 @@
 ## Dash Authorization and Login
 
-<div align="center">
-  <a href="https://dash.plotly.com/project-maintenance">
-    <img src="https://dash.plotly.com/assets/images/maintained-by-plotly.png" width="400px" alt="Maintained by Plotly">
-  </a>
-</div>
-
-Docs: [https://dash.plotly.com/authentication](https://dash.plotly.com/authentication)
+Offshoot authentication based upon the open source `dash-auth` library from Plotly. Plotly Docs: [https://dash.plotly.com/authentication](https://dash.plotly.com/authentication)
 
 License: MIT
-
-Tests: [![CircleCI](https://circleci.com/gh/plotly/dash-auth.svg?style=svg)](https://circleci.com/gh/plotly/dash-auth)
 
 For local testing, create a virtualenv, install the dev requirements, and run individual
 tests or test classes:
@@ -24,11 +16,9 @@ python -k ba001
 
 Note that Python 3.8 or greater is required.
 
-> Please note that Plotly will continue to merge bug fixes to this package,
-> but will no longer accept new features as we consider this package feature-complete.
-> For those looking for a more advanced authentication offering from Plotly,
-> Dash Enterprise offers authentication middleware for Dash apps.
-> Learn more at: https://plotly.com/dash/authentication/
+> As Plotly will not add new features to the `dash-auth` library, this was created to allow for new features to be added.
+> However, please note that you are entirely responsible maintaining the security with using this open source package.
+> If you are looking for a full fledged solution with little work, check out what Dash Enterprise offers. Learn more at: https://plotly.com/dash/authentication/
 
 ## Usage
 
@@ -223,7 +213,7 @@ app.layout = html.Div([
 
 auth = OIDCAuth(
   app,
-  secret_key="aStaticSecretKey!",
+  secret_key="aStaticSecretKey!", # be sure to replace this key and make it strong as this is how cookies are generated in the application
   # Set the route at which the user will select the IDP they wish to login with
   idp_selection_route="/login",
 )
