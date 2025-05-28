@@ -3,7 +3,7 @@ from .basic_auth import BasicAuth
 from .group_protection import (
     list_groups, check_groups, protected, protected_callback
 )
-# oidc auth requires authlib, install with `pip install dash-auth[oidc]`
+# oidc auth requires authlib, install with `pip install dash-auth-plus[oidc]`
 try:
     from .oidc_auth import OIDCAuth, get_oauth
 except ModuleNotFoundError:
