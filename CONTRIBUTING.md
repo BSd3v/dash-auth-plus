@@ -6,8 +6,7 @@ This package is available on PyPI. We can create a new version as often as whene
 
 To publish:
 1. **PyPI Access**
-- Ask @chriddyp to be added as a maintainer on PyPI.
-Note that for security reasons, this is restricted to Plotly employees.
+- Ask @BSd3v to be added as a maintainer on PyPI.
 - PyPI has a new website, register your account here: https://pypi.org/.
 - If you already have a PyPI account, you'll need to make sure that your email is registered
 - Add your PyPI credentials to a file at `~/.pypirc`.
@@ -23,8 +22,8 @@ password:your_pypi_password
 
 2. **Changelogs and Version**
 - Check the recent commits and PRs and add anything notable to the `CHANGELOG.md` file
-- Bump the version number in `dash_auth/version.py`. Follow [Semantic Versioning 2.0.0](https://semver.org/)
-- Create a PR and tag @chriddyp for review
+- Bump the version number in `dash_auth_plus/version.py`. Follow [Semantic Versioning 2.0.0](https://semver.org/)
+- Create a PR
 - Once reviewed, merge into main.
 
 3. **Create a Python Build**
