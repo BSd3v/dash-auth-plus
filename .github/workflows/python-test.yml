@@ -49,7 +49,9 @@ jobs:
           uv pip install -r dev-requirements.txt
 
       - name: Lint
-        run: npm run lint
+        run: |
+          source .venv/bin/activate
+          npm run lint
 
       - name: Run tests
         run: |
