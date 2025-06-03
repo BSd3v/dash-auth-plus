@@ -42,6 +42,7 @@ jobs:
           source test-dist/bin/activate
           WHL_FILE=$(ls dist/*.whl)
           uv pip install "${WHL_FILE}"
+          uv pip install -r dev-requirements.txt
           pytest --headless
         shell: bash
       - name: Upload Python distributions
