@@ -5,13 +5,8 @@ import pytest
 from dash_auth_plus import basic_auth
 
 TEST_USERS = {
-    "valid": [
-        ["hello", "world"],
-        ["hello2", "wo:rld"]
-    ],
-    "invalid": [
-        ["hello", "password"]
-    ],
+    "valid": [["hello", "world"], ["hello2", "wo:rld"]],
+    "invalid": [["hello", "password"]],
 }
 
 
@@ -25,10 +20,9 @@ def auth_function(username, password):
 
 def test_ba002_basic_auth_login_flow(dash_br, dash_thread_server):
     app = Dash(__name__)
-    app.layout = html.Div([
-        dcc.Input(id="input", value="initial value"),
-        html.Div(id="output")
-    ])
+    app.layout = html.Div(
+        [dcc.Input(id="input", value="initial value"), html.Div(id="output")]
+    )
 
     @app.callback(Output("output", "children"), Input("input", "value"))
     def update_output(new_value):
@@ -64,10 +58,9 @@ def test_ba002_basic_auth_login_flow(dash_br, dash_thread_server):
 # Test incorrect initialization of BasicAuth
 def both_dict_and_func(dash_br, dash_thread_server):
     app = Dash(__name__)
-    app.layout = html.Div([
-        dcc.Input(id="input", value="initial value"),
-        html.Div(id="output")
-    ])
+    app.layout = html.Div(
+        [dcc.Input(id="input", value="initial value"), html.Div(id="output")]
+    )
 
     basic_auth.BasicAuth(app, TEST_USERS["valid"], auth_func=auth_function)
     return True
@@ -75,10 +68,9 @@ def both_dict_and_func(dash_br, dash_thread_server):
 
 def both_no_auth_func_or_dict(dash_br, dash_thread_server):
     app = Dash(__name__)
-    app.layout = html.Div([
-        dcc.Input(id="input", value="initial value"),
-        html.Div(id="output")
-    ])
+    app.layout = html.Div(
+        [dcc.Input(id="input", value="initial value"), html.Div(id="output")]
+    )
     basic_auth.BasicAuth(app)
     return True
 

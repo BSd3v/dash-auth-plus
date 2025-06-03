@@ -16,9 +16,7 @@ class BasicAuth(Auth):
         username_password_list: Union[list, dict] = None,
         auth_func: Callable = None,
         public_routes: Optional[list] = None,
-        user_groups: Optional[
-            Union[UserGroups, Callable[[str], UserGroups]]
-        ] = None,
+        user_groups: Optional[Union[UserGroups, Callable[[str], UserGroups]]] = None,
         secret_key: str = None,
         auth_protect_layouts: Optional[bool] = False,
         auth_protect_layouts_kwargs: Optional[dict] = None,
@@ -109,17 +107,13 @@ class BasicAuth(Auth):
             try:
                 flask.session["user"] = {"email": username, "groups": []}
                 if callable(self._user_groups):
-                    flask.session["user"]["groups"] = self._user_groups(
-                        username
-                    )
+                    flask.session["user"]["groups"] = self._user_groups(username)
                 elif self._user_groups:
                     flask.session["user"]["groups"] = self._user_groups.get(
                         username, []
                     )
             except RuntimeError:
-                logging.warning(
-                    "Session is not available. Have you set a secret key?"
-                )
+                logging.warning("Session is not available. Have you set a secret key?")
         return authorized
 
     def login_request(self):

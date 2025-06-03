@@ -28,5 +28,5 @@ __all__ = [
     "BasicAuth",
     "OIDCAuth",
     "__version__",
-    "__plotly_dash_auth_version__"
+    "__plotly_dash_auth_version__",
 ]

@@ -11,9 +11,7 @@ from flask import Response, redirect, request, session, url_for
 from werkzeug.routing import Map, Rule
 
 if TYPE_CHECKING:
-    from authlib.integrations.flask_client.apps import (
-        FlaskOAuth1App, FlaskOAuth2App
-    )
+    from authlib.integrations.flask_client.apps import FlaskOAuth1App, FlaskOAuth2App
 
 UserGroups = Dict[str, List[str]]
 
@@ -34,9 +32,7 @@ class OIDCAuth(Auth):
         public_routes: Optional[list] = None,
         logout_page: Union[str, Response] = None,
         secure_session: bool = False,
-        user_groups: Optional[
-            Union[UserGroups, Callable[[str], List[str]]]
-        ] = None,
+        user_groups: Optional[Union[UserGroups, Callable[[str], List[str]]]] = None,
         login_user_callback: Callable = None,
         auth_protect_layouts: Optional[bool] = False,
         auth_protect_layouts_kwargs: Optional[dict] = None,
@@ -160,13 +156,9 @@ class OIDCAuth(Auth):
 
         # Check that the login and callback rules have an <idp> placeholder
         if not re.findall(r"/<idp>(?=/|$)", login_route):
-            raise Exception(
-                "The login route must contain a <idp> placeholder."
-            )
+            raise Exception("The login route must contain a <idp> placeholder.")
         if not re.findall(r"/<idp>(?=/|$)", callback_route):
-            raise Exception(
-                "The callback route must contain a <idp> placeholder."
-            )
+            raise Exception("The callback route must contain a <idp> placeholder.")
 
         app.server.add_url_rule(
             login_route,
@@ -208,18 +200,14 @@ class OIDCAuth(Auth):
             )
         client_kwargs = kwargs.pop("client_kwargs", {})
         client_kwargs.setdefault("scope", "openid email")
-        self.oauth.register(
-            idp_name, client_kwargs=client_kwargs, **kwargs
-        )
+        self.oauth.register(idp_name, client_kwargs=client_kwargs, **kwargs)
 
     def get_oauth_client(self, idp: str):
         """Get the OAuth client."""
         if idp not in self.oauth._registry:
             raise ValueError(f"'{idp}' is not a valid registered idp")
 
-        client: Union[FlaskOAuth1App, FlaskOAuth2App] = (
-            self.oauth.create_client(idp)
-        )
+        client: Union[FlaskOAuth1App, FlaskOAuth2App] = self.oauth.create_client(idp)
         return client
 
     def get_oauth_kwargs(self, idp: str):
@@ -227,9 +215,7 @@ class OIDCAuth(Auth):
         if idp not in self.oauth._registry:
             raise ValueError(f"'{idp}' is not a valid registered idp")
 
-        kwargs: dict = (
-            self.oauth._registry[idp][1]
-        )
+        kwargs: dict = self.oauth._registry[idp][1]
         return kwargs
 
     def _create_redirect_uri(self, idp: str):
@@ -258,8 +244,7 @@ class OIDCAuth(Auth):
                 idp = next(iter(self.oauth._clients))
             else:
                 return (
-                    "Several OAuth providers are registered. "
-                    "Please choose one.",
+                    "Several OAuth providers are registered. " "Please choose one.",
                     400,
                 )
 
@@ -275,13 +260,16 @@ class OIDCAuth(Auth):
         """Logout the user."""
         session.clear()
         base_url = self.app.config.get("url_base_pathname") or "/"
-        page = self.logout_page or f"""
+        page = (
+            self.logout_page
+            or f"""
         <div style="display: flex; flex-direction: column;
         gap: 0.75rem; padding: 3rem 5rem;">
             <div>Logged out successfully</div>
             <div><a href="{base_url}">Go back</a></div>
         </div>
         """
+        )
         return page
 
     def callback(self, idp: str):  # pylint: disable=C0116
@@ -301,7 +289,7 @@ class OIDCAuth(Auth):
         user = token.get("userinfo")
         return self.after_logged_in(user, idp, token)
 
-    def after_logged_in(self, user: Optional[dict], idp: str,  token: dict):
+    def after_logged_in(self, user: Optional[dict], idp: str, token: dict):
         """
         Post-login actions after successful OIDC authentication.
         For example, allows to pass custom attributes to the user session:
@@ -317,9 +305,9 @@ class OIDCAuth(Auth):
             session["user"] = user
             session["idp"] = idp
             if callable(self._user_groups):
-                session["user"]["groups"] = self._user_groups(
-                    user.get("email")
-                ) + (session["user"].get("groups") or [])
+                session["user"]["groups"] = self._user_groups(user.get("email")) + (
+                    session["user"].get("groups") or []
+                )
             elif self._user_groups:
                 session["user"]["groups"] = self._user_groups.get(
                     user.get("email"), []
