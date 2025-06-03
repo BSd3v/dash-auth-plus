@@ -4,20 +4,13 @@
 
 This package is available on PyPI. We can create a new version as often as whenever a PR is merged.
 
-To publish:
-1. **PyPI Access**
-- Ask @BSd3v to be added as a maintainer on PyPI.
-- PyPI has a new website, register your account here: https://pypi.org/.
-- If you already have a PyPI account, you'll need to make sure that your email is registered
-- Add your PyPI credentials to a file at `~/.pypirc`.
-It will look something like:
+1. **Install Dependencies**
+- To aid with processes for testing, we have added package.json to install npm dependencies and scripts.
 ```
-[distutils]
-index-servers =
-   pypi
-[pypi]
-username:your_pypi_username
-password:your_pypi_password
+python -m venv .venv
+source .venv/bin/activate
+pip install -r dev-requirements.txt
+npm i
 ```
 
 2. **Changelogs and Version**
@@ -28,31 +21,23 @@ password:your_pypi_password
 
 3. **Create a Python Build**
 ```
-$ rm -rf dist build
-$ python setup.py sdist bdist_wheel
+$ npm run dist
+```
+- This will create a source distribution and a wheel in the `dist/` folder.
+
+4. **Test it**
+- Test your tarball by copying it into a new environment and installing it locally:
+```
+$ pip install dash_auth_plus-0.0.1.tar.gz
 ```
 
-4. **Upload the Build to PyPI**
-First, install twine: the new tool for uploading packages to PyPI
-```
-$ pip install twine
-```
-
-Then, upload to PyPI using Twine.
-```
-$ twine upload dist/*
-```
-
-5. **Git Tag**
-Create a Git Tag with the version number:
-```
-git tag -a 'v0.1.0' -m 'v0.1.0'
-git push origin main --follow-tags
-```
-
-6. **Test it out**
-In a new folder, make sure the installation uploaded correctly.
-Note that sometimes PyPI's servers take a few minutes for installations to be recognized.
-```
-pip install dash-auth --upgrade
-```
+5. **Publish a New Release**
+- A Github release with package build files is automatically generated when a new tag starting with `v*` is pushed.
+- Once a Github release is published, the build is re-generated and pushed to PyPi.
+- Create a git tag:
+    ```
+    git tag -a 'v0.1.0' -m 'v0.1.0'
+    git push --tags
+    ```
+- Wait for the "Generate release" CI job to complete, then check the releases tab to move the release from "Draft" to "Published". Make sure to copy in the Changelog.
+- When the release is published to Github, it's automatically pushed to PyPi as well.
