@@ -39,9 +39,7 @@ class Auth(ABC):
 
         # Deprecated arguments
         if obsolete:
-            raise TypeError(
-                f"Auth got unexpected keyword arguments: {list(obsolete)}"
-            )
+            raise TypeError(f"Auth got unexpected keyword arguments: {list(obsolete)}")
 
         self.app = app
         self._protect()
@@ -86,8 +84,7 @@ class Auth(ABC):
                     (
                         inp.get("value")
                         for inp in body["inputs"]
-                        if isinstance(inp, dict)
-                        and inp.get("property") == "pathname"
+                        if isinstance(inp, dict) and inp.get("property") == "pathname"
                     ),
                     None,
                 )

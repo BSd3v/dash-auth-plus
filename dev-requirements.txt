@@ -5,3 +5,4 @@ flask
 werkzeug
 pytest
 authlib
+black

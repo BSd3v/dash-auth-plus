@@ -93,9 +93,7 @@ def check_groups(
 
     if restricted_users:
         if callable(restricted_users):
-            restricted_users = restricted_users(
-                **(restricted_users_lookup or {})
-            )
+            restricted_users = restricted_users(**(restricted_users_lookup or {}))
         if session["user"][user_session_key] in restricted_users:
             # User is restricted
             return False
@@ -126,7 +124,7 @@ def protected(
     restricted_users: Optional[Union[Callable, List[str]]] = None,
     restricted_users_lookup: dict = None,
     user_session_key: str = "email",
-    **_kwargs
+    **_kwargs,
 ) -> Callable:
     """Decorate a function or output to alter it depending on the state
     of authentication and permissions.
@@ -299,7 +297,10 @@ def protected_callback(
 
     return decorator
 
-def protect_layouts(public_routes: Union[List[str], MapAdapter] = None, **kwargs) -> str:
+
+def protect_layouts(
+    public_routes: Union[List[str], MapAdapter] = None, **kwargs
+) -> str:
     if "pages_folder" in dash.get_app().config:
         for pg in dash.page_registry.values():
             new_kwargs = {**kwargs, **pg}
@@ -311,12 +312,9 @@ def protect_layouts(public_routes: Union[List[str], MapAdapter] = None, **kwargs
                 if isinstance(public_routes, list):
                     if not (
                         pg["path"] in public_routes
-                        or pg.get("path_template")
-                        in public_routes
+                        or pg.get("path_template") in public_routes
                     ):
-                        pg["layout"] = protected(**new_kwargs)(
-                            pg["layout"]
-                        )
+                        pg["layout"] = protected(**new_kwargs)(pg["layout"])
                 elif not (
                     public_routes.test(pg.get("path_template"))
                     or public_routes.test(pg["path"])

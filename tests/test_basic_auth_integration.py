@@ -5,22 +5,16 @@ from dash_auth_plus import BasicAuth, add_public_routes, protected
 
 
 TEST_USERS = {
-    "valid": [
-        ["hello", "world"],
-        ["hello2", "wo:rld"]
-    ],
-    "invalid": [
-        ["hello", "password"]
-    ],
+    "valid": [["hello", "world"], ["hello2", "wo:rld"]],
+    "invalid": [["hello", "password"]],
 }
 
 
 def test_ba001_basic_auth_login_flow(dash_br, dash_thread_server):
     app = Dash(__name__)
-    app.layout = html.Div([
-        dcc.Input(id="input", value="initial value"),
-        html.Div(id="output")
-    ])
+    app.layout = html.Div(
+        [dcc.Input(id="input", value="initial value"), html.Div(id="output")]
+    )
 
     @app.callback(Output("output", "children"), Input("input", "value"))
     def update_output(new_value):
@@ -62,10 +56,9 @@ def test_ba001_basic_auth_login_flow(dash_br, dash_thread_server):
 
 def test_ba002_basic_auth_groups(dash_br, dash_thread_server):
     app = Dash(__name__)
-    app.layout = html.Div([
-        dcc.Input(id="input", value="initial value"),
-        html.Div(id="output")
-    ])
+    app.layout = html.Div(
+        [dcc.Input(id="input", value="initial value"), html.Div(id="output")]
+    )
 
     @app.callback(
         Output("output", "children"),
