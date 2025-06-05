@@ -8,4 +8,4 @@ authlib
 black
 clerk-sdk
 clerk-backend-api==3.0.1
-dotenv
+python-dotenv

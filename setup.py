@@ -21,7 +21,7 @@ setup(
         "dash>=1.1.1",
         "flask",
         "werkzeug",
-        "dotenv"
+        "python-dotenv"
     ],
     extras_require={
         "oidc": ["authlib"],
