@@ -187,9 +187,18 @@ class ClerkAuth(Auth):
         host = app.server.config.get("SERVER_NAME") or "127.0.0.1"
         port = app.server.config.get("SERVER_PORT", 8050)
         self.allowed_parties = (
-            allowed_parties + [f"http://{host}:{port}", f"http://localhost:{port}"]
+            allowed_parties
+            + [
+                f"http://{host}:{port}",
+                f"http://localhost:{port}",
+                f"https://localhost:{port}",
+            ]
             if allowed_parties
-            else [f"http://{host}:{port}", f"http://localhost:{port}"]
+            else [
+                f"http://{host}:{port}",
+                f"http://localhost:{port}",
+                f"https://localhost:{port}",
+            ]
         )
         self.callback_route = "/auth_callback"
 
