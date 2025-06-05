@@ -6,3 +6,4 @@ werkzeug
 pytest
 authlib
 black
+clerk-sdk
