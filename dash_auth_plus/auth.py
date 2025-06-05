@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Union
 
 from dash import Dash
-from flask import request
+from flask import request, session
 
 from .public_routes import (
     add_public_routes,
@@ -65,7 +65,6 @@ class Auth(ABC):
 
         @server.before_request
         def before_request_auth():
-
             public_routes = get_public_routes(self.app)
             public_callbacks = get_public_callbacks(self.app)
 
