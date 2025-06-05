@@ -12,6 +12,7 @@ from flask import Response, redirect, request, session, url_for, jsonify
 from werkzeug.routing import Map, Rule
 from dotenv import load_dotenv
 from urllib.parse import urljoin, quote
+
 load_dotenv()
 from werkzeug.routing import MapAdapter
 
@@ -23,61 +24,62 @@ UserGroups = Dict[str, List[str]]
 # UI/UX Design tokens following best practices from the guide
 DESIGN_TOKENS = {
     # Colors following proper contrast ratios (WCAG AA)
-    'colors': {
-        'primary': '#0066cc',
-        'primary_hover': '#0052a3',
-        'danger': '#dc3545',
-        'danger_hover': '#c82333',
-        'text_primary': '#212529',  # Not pure black as per guide
-        'text_secondary': '#6c757d',
-        'background': '#ffffff',
-        'background_secondary': '#f8f9fa',
-        'border': '#dee2e6',
-        'shadow': 'rgba(0, 0, 0, 0.1)',  # Soft shadows as recommended
+    "colors": {
+        "primary": "#0066cc",
+        "primary_hover": "#0052a3",
+        "danger": "#dc3545",
+        "danger_hover": "#c82333",
+        "text_primary": "#212529",  # Not pure black as per guide
+        "text_secondary": "#6c757d",
+        "background": "#ffffff",
+        "background_secondary": "#f8f9fa",
+        "border": "#dee2e6",
+        "shadow": "rgba(0, 0, 0, 0.1)",  # Soft shadows as recommended
     },
     # Typography following the guide's recommendations
-    'typography': {
-        'font_family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-        'font_size_base': '14px',  # Readable size
-        'font_size_small': '12px',
-        'font_weight_normal': '400',
-        'font_weight_medium': '500',
-        'font_weight_semibold': '600',
-        'line_height': '1.5',
+    "typography": {
+        "font_family": '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+        "font_size_base": "14px",  # Readable size
+        "font_size_small": "12px",
+        "font_weight_normal": "400",
+        "font_weight_medium": "500",
+        "font_weight_semibold": "600",
+        "line_height": "1.5",
     },
     # Spacing system using base unit of 4px as recommended
-    'spacing': {
-        'xs': '4px',
-        'sm': '8px',
-        'md': '12px',
-        'lg': '16px',
-        'xl': '24px',
+    "spacing": {
+        "xs": "4px",
+        "sm": "8px",
+        "md": "12px",
+        "lg": "16px",
+        "xl": "24px",
     },
     # Border radius for consistency
-    'border_radius': {
-        'sm': '4px',
-        'md': '8px',
-        'full': '50%',
+    "border_radius": {
+        "sm": "4px",
+        "md": "8px",
+        "full": "50%",
     },
     # Transitions for smooth interactions
-    'transitions': {
-        'fast': 'all 0.15s ease',
-        'medium': 'all 0.2s ease',
-    }
+    "transitions": {
+        "fast": "all 0.15s ease",
+        "medium": "all 0.2s ease",
+    },
 }
 
 
 class ClerkAuth(Auth):
     """Implements auth via Clerk."""
+
     def __init__(
         self,
         app: dash.Dash,
         secret_key: str = Optional[None],
         force_https_callback: Optional[Union[bool, str]] = None,
-        clerk_secret_key: str = os.environ.get('CLERK_SECRET_KEY'),
-        clerk_domain: str = os.environ.get('CLERK_DOMAIN'),
-        clerk_publishable_key: str = os.environ.get('CLERK_PUBLISHABLE_KEY'),
-        allowed_parties: Optional[str] = os.environ.get('CLERK_ALLOWED_PARTIES'),
+        clerk_secret_key: str = os.environ.get("CLERK_SECRET_KEY"),
+        clerk_domain: str = os.environ.get("CLERK_DOMAIN"),
+        clerk_publishable_key: str = os.environ.get("CLERK_PUBLISHABLE_KEY"),
+        allowed_parties: Optional[str] = os.environ.get("CLERK_ALLOWED_PARTIES"),
         log_signins: bool = False,
         public_routes: Optional[list] = None,
         logout_page: Union[str, Response] = None,
@@ -181,17 +183,21 @@ class ClerkAuth(Auth):
         self.logout_page = logout_page
         self._user_groups = user_groups
         self.login_user_callback = login_user_callback
-        self.login_route = '/login'
-        self.logout_route = '/logout'
+        self.login_route = "/login"
+        self.logout_route = "/logout"
         self.authenticate_request_options = AuthenticateRequestOptions
         self.allowed_parties = allowed_parties
-        self.callback_route = '/auth_callback'
+        self.callback_route = "/auth_callback"
 
         # Validate required configuration
         if not self.clerk_secret_key:
-            raise ValueError("clerk_secret_key is required (set CLERK_SECRET_KEY env var)")
+            raise ValueError(
+                "clerk_secret_key is required (set CLERK_SECRET_KEY env var)"
+            )
         if not self.clerk_publishable_key:
-            raise ValueError("clerk_publishable_key is required (set CLERK_PUBLISHABLE_KEY env var)")
+            raise ValueError(
+                "clerk_publishable_key is required (set CLERK_PUBLISHABLE_KEY env var)"
+            )
         if not self.clerk_domain:
             raise ValueError("clerk_domain is required (set CLERK_SIGN_IN_URL env var)")
 
@@ -239,17 +245,17 @@ class ClerkAuth(Auth):
             methods=["GET", "POST"],
         )
 
-        clerk_script = f'''
+        clerk_script = f"""
             <script
                 async
                 crossorigin="anonymous"
                 data-clerk-publishable-key="{self.clerk_publishable_key}"
                 src="{self.clerk_domain}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
                 type="text/javascript">
-            </script>'''
+            </script>"""
 
         # Enhanced initialization with smart auth checking
-        init_script = '''
+        init_script = """
                         <script>
                             // Helper to ensure Clerk is ready
                             window.waitForClerk = function() {
@@ -313,15 +319,15 @@ class ClerkAuth(Auth):
                                 });
                             });
                         </script>
-                        '''
+                        """
 
-        self.clerk_script = f'{clerk_script}\n{init_script}\n'
+        self.clerk_script = f"{clerk_script}\n{init_script}\n"
 
         if dash.__version__ >= "3.0":
             # Use the new OAuth2App class for Dash 3+
             @dash.hooks.layout()
             def append_clerk_url(layout):
-                return [dash.dcc.Location(id='_clerk_login_url', refresh=True), layout]
+                return [dash.dcc.Location(id="_clerk_login_url", refresh=True), layout]
 
             @dash.hooks.index()
             def add_clerk_script(index_string):
@@ -329,9 +335,8 @@ class ClerkAuth(Auth):
                 if not self.initialized:
                     return index_string
 
-
                 # Add enhanced styles for hover effects and transitions
-                enhanced_styles = f'''
+                enhanced_styles = f"""
                 <style>
                     /* Enhanced avatar and dropdown styles following UI/UX best practices */
                     #clerk-user-avatar {{
@@ -373,16 +378,21 @@ class ClerkAuth(Auth):
                         box-shadow: 0 1px 4px {DESIGN_TOKENS['colors']['shadow']};
                     }}
                 </style>
-                '''
+                """
 
-                if clerk_script and '</head>' in index_string:
+                if clerk_script and "</head>" in index_string:
                     # Inject scripts and styles before closing head tag
-                    index_string = index_string.replace('</head>',
-                                                        f'{self.clerk_script}\n{enhanced_styles}\n    </head>')
+                    index_string = index_string.replace(
+                        "</head>",
+                        f"{self.clerk_script}\n{enhanced_styles}\n    </head>",
+                    )
 
                 return index_string
+
         else:
-            app.index_string = app.index_string.split('</body>')[0] + clerk_script + '</body>'
+            app.index_string = (
+                app.index_string.split("</body>")[0] + clerk_script + "</body>"
+            )
 
     def _create_redirect_uri(self):
         """Create the redirect uri based on callback endpoint and idp."""
@@ -390,9 +400,16 @@ class ClerkAuth(Auth):
         if self.force_https_callback:
             kwargs["_scheme"] = "https"
 
-        redirect_uri = urljoin(self.clerk_domain, '/sign-in?redirect_url=' +
-                               quote(request.host_url[:-1] + self.callback_route, safe=''))
-        session['url'] = request.url if request.method == 'GET' else request.headers.get('referer', request.host_url)
+        redirect_uri = urljoin(
+            self.clerk_domain,
+            "/sign-in?redirect_url="
+            + quote(request.host_url[:-1] + self.callback_route, safe=""),
+        )
+        session["url"] = (
+            request.url
+            if request.method == "GET"
+            else request.headers.get("referer", request.host_url)
+        )
         if request.headers.get("X-Forwarded-Host"):
             host = request.headers.get("X-Forwarded-Host")
             redirect_uri = redirect_uri.replace(request.host, host, 1)
@@ -401,20 +418,22 @@ class ClerkAuth(Auth):
     def login_request(self):
         """Start the login process."""
         if request.method == "POST":
-            return jsonify({
-                'multi': True,
-                'sideUpdate': {
-                    '_clerk_login_url': {'href': self._create_redirect_uri()}
+            return jsonify(
+                {
+                    "multi": True,
+                    "sideUpdate": {
+                        "_clerk_login_url": {"href": self._create_redirect_uri()}
+                    },
                 }
-            })
+            )
         return redirect(self._create_redirect_uri())
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
-        if 'user' in session:
+        if "user" in session:
             try:
                 self.clerk_client.sessions.revoke(
-                    session_id=session.get('user', {}).get('session_id', '')
+                    session_id=session.get("user", {}).get("session_id", "")
                 )
             except:
                 print(traceback.format_exc())
@@ -430,7 +449,7 @@ class ClerkAuth(Auth):
         </div>
         {self.clerk_script}
         """,
-            mimetype="text/html"
+            mimetype="text/html",
         )
         for cookie in request.cookies:
             response.delete_cookie(cookie)
@@ -447,16 +466,22 @@ class ClerkAuth(Auth):
                 return super().after_logged_in(user, idp, token)
         """
         if self.login_user_callback:
-            return self.login_user_callback(user, 'clerk')
+            return self.login_user_callback(user, "clerk")
         elif user:
-            email = [x.email_address for x in user.email_addresses
-                     if x.id == user.primary_email_address_id][0] \
-                if user.email_addresses else None
-            session['user'] = {
-                'clerk_user_id': user.id,
-                'userid': user.username,
-                'email': email,
-                'session_id': sid
+            email = (
+                [
+                    x.email_address
+                    for x in user.email_addresses
+                    if x.id == user.primary_email_address_id
+                ][0]
+                if user.email_addresses
+                else None
+            )
+            session["user"] = {
+                "clerk_user_id": user.id,
+                "userid": user.username,
+                "email": email,
+                "session_id": sid,
             }
             if callable(self._user_groups):
                 session["user"]["groups"] = self._user_groups(user.get("email")) + (
@@ -467,13 +492,11 @@ class ClerkAuth(Auth):
                     user.get("email"), []
                 ) + (session["user"].get("groups") or [])
             if self.log_signins:
-                logging.info("User %s is logging in.", session['user'].get("email"))
-        if session.get('url'):
-            url = session['url']
-            del session['url']
+                logging.info("User %s is logging in.", session["user"].get("email"))
+        if session.get("url"):
+            url = session["url"]
+            del session["url"]
             return redirect(url)
-
-
 
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
@@ -482,17 +505,17 @@ class ClerkAuth(Auth):
                 request,
                 self.authenticate_request_options(
                     authorized_parties=self.allowed_parties,
-                )
+                ),
             )
 
             if request_state.is_signed_in:
-                sid = request_state.payload.get('sid')
+                sid = request_state.payload.get("sid")
                 sess = self.clerk_client.sessions.get(session_id=sid)
                 user_data = self.clerk_client.users.get(user_id=sess.user_id)
                 return self.after_logged_in(user_data, sid)
         except:
             print(traceback.format_exc())
-            pass ## outside the authenticate_request method is applicable in the context of Backend APIs only.
+            pass  ## outside the authenticate_request method is applicable in the context of Backend APIs only.
         return f"""<div>logging in...</div>{self.clerk_script}"""
 
     def is_authorized(self):  # pylint: disable=C0116
@@ -501,20 +524,16 @@ class ClerkAuth(Auth):
         map_adapter = Map(
             [
                 Rule(x)
-                for x in [
-                    self.login_route,
-                    self.logout_route,
-                    self.callback_route
-                ]
+                for x in [self.login_route, self.logout_route, self.callback_route]
                 if x
             ]
         ).bind("")
 
         if (
-                "user" in session
-                or map_adapter.test(request.path)
-                or self.clerk_domain in request.url
-                or request.path.startswith('/.well-known/')
+            "user" in session
+            or map_adapter.test(request.path)
+            or self.clerk_domain in request.url
+            or request.path.startswith("/.well-known/")
         ):
             return True
         return False
