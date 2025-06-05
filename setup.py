@@ -24,8 +24,8 @@ setup(
     ],
     extras_require={
         "oidc": ["authlib"],
-        "clerk": ["clerk-sdk"],
-        "all": ["authlib", "clerk-sdk"]
+        "clerk": ["clerk-sdk", "clerk-backend-api==3.0.1"],
+        "all": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"]
     },
     python_requires=">=3.8",
     include_package_data=True,
