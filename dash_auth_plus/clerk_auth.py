@@ -73,7 +73,7 @@ class ClerkAuth(Auth):
         clerk_secret_key: str = os.environ.get("CLERK_SECRET_KEY"),
         clerk_domain: str = os.environ.get("CLERK_DOMAIN"),
         clerk_publishable_key: str = os.environ.get("CLERK_PUBLISHABLE_KEY"),
-        allowed_parties: Optional[str] = os.environ.get("CLERK_ALLOWED_PARTIES"),
+        allowed_parties: Optional[List[str]] = os.environ.get("CLERK_ALLOWED_PARTIES", "").split(",") if os.environ.get("CLERK_ALLOWED_PARTIES") else [],
         log_signins: bool = False,
         public_routes: Optional[list] = None,
         logout_page: Union[str, Response] = None,
@@ -180,7 +180,9 @@ class ClerkAuth(Auth):
         self.login_route = "/login"
         self.logout_route = "/logout"
         self.authenticate_request_options = AuthenticateRequestOptions
-        self.allowed_parties = allowed_parties
+        host = app.server.config.get("SERVER_NAME", "127.0.0.1")
+        port = app.server.config.get("SERVER_PORT", 8050)
+        self.allowed_parties = allowed_parties.append(f"http://{host}:{port}/") if allowed_parties else [f"http://{host}:{port}/"]
         self.callback_route = "/auth_callback"
 
         # Validate required configuration
@@ -442,7 +444,6 @@ class ClerkAuth(Auth):
             <div>Logged out successfully</div>
             <div><a href="{self.app.config.get("url_base_pathname") or "/"}">Go back</a></div>
         </div>
-        {self.clerk_script}
         """,
             mimetype="text/html",
         )
