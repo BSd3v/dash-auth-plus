@@ -1,23 +1,17 @@
 import logging
 import os
-import re
 import traceback
-from typing import Dict, List, Optional, Union, Callable, TYPE_CHECKING
+from typing import Dict, List, Optional, Union, Callable
 
 import dash
-from authlib.integrations.base_client import OAuthError
 from authlib.integrations.flask_client import OAuth
 from dash_auth_plus.auth import Auth
-from flask import Response, redirect, request, session, url_for, jsonify
+from flask import Response, redirect, request, session, jsonify
 from werkzeug.routing import Map, Rule
 from dotenv import load_dotenv
 from urllib.parse import urljoin, quote
 
 load_dotenv()
-from werkzeug.routing import MapAdapter
-
-if TYPE_CHECKING:
-    from authlib.integrations.flask_client.apps import FlaskOAuth1App, FlaskOAuth2App
 
 UserGroups = Dict[str, List[str]]
 
@@ -364,15 +358,15 @@ class ClerkAuth(Auth):
                     }}
 
                     /* Button hover effects */
-                    #clerk-login-button:hover, 
-                    #clerk-profile-button:hover, 
+                    #clerk-login-button:hover,
+                    #clerk-profile-button:hover,
                     #clerk-logout-menu-item:hover {{
                         transform: translateY(-1px);
                         box-shadow: 0 2px 8px {DESIGN_TOKENS['colors']['shadow']};
                     }}
 
-                    #clerk-login-button:active, 
-                    #clerk-profile-button:active, 
+                    #clerk-login-button:active,
+                    #clerk-profile-button:active,
                     #clerk-logout-menu-item:active {{
                         transform: translateY(0);
                         box-shadow: 0 1px 4px {DESIGN_TOKENS['colors']['shadow']};
@@ -435,9 +429,10 @@ class ClerkAuth(Auth):
                 self.clerk_client.sessions.revoke(
                     session_id=session.get("user", {}).get("session_id", "")
                 )
-            except:
-                print(traceback.format_exc())
-                pass
+            except Exception as e:
+                logging.error(
+                    "Failed to revoke Clerk session: %s\n%s", e, traceback.format_exc()
+                )
         session.clear()
         response = Response(
             self.logout_page
@@ -500,22 +495,18 @@ class ClerkAuth(Auth):
 
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
-        try:
-            request_state = self.clerk_client.authenticate_request(
-                request,
-                self.authenticate_request_options(
-                    authorized_parties=self.allowed_parties,
-                ),
-            )
+        request_state = self.clerk_client.authenticate_request(
+            request,
+            self.authenticate_request_options(
+                authorized_parties=self.allowed_parties,
+            ),
+        )
 
-            if request_state.is_signed_in:
-                sid = request_state.payload.get("sid")
-                sess = self.clerk_client.sessions.get(session_id=sid)
-                user_data = self.clerk_client.users.get(user_id=sess.user_id)
-                return self.after_logged_in(user_data, sid)
-        except:
-            print(traceback.format_exc())
-            pass  ## outside the authenticate_request method is applicable in the context of Backend APIs only.
+        if request_state.is_signed_in:
+            sid = request_state.payload.get("sid")
+            sess = self.clerk_client.sessions.get(session_id=sid)
+            user_data = self.clerk_client.users.get(user_id=sess.user_id)
+            return self.after_logged_in(user_data, sid)
         return f"""<div>logging in...</div>{self.clerk_script}"""
 
     def is_authorized(self):  # pylint: disable=C0116

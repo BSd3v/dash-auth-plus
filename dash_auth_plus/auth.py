@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Union
 
 from dash import Dash
-from flask import request, session
+from flask import request
 
 from .public_routes import (
     add_public_routes,
