@@ -361,8 +361,11 @@ class ClerkAuth(Auth):
             # Use the new OAuth2App class for Dash 3+
             @dash.hooks.layout()
             def append_clerk_url(layout):
-                return [dash.dcc.Location(id="_clerk_login_url", refresh=True),
-                    dash.dcc.Store(id='clerk_logged_in', storage_type='local'), layout]
+                return [
+                    dash.dcc.Location(id="_clerk_login_url", refresh=True),
+                    dash.dcc.Store(id="clerk_logged_in", storage_type="local"),
+                    layout,
+                ]
 
             @dash.hooks.index()
             def add_clerk_script(index_string):
@@ -479,22 +482,22 @@ class ClerkAuth(Auth):
                     session["user"].get("groups") or []
                 )
             elif self._user_groups:
-                session["user"]["groups"] = self._user_groups.get(
-                    email, []
-                ) + (session["user"].get("groups") or [])
+                session["user"]["groups"] = self._user_groups.get(email, []) + (
+                    session["user"].get("groups") or []
+                )
             if self.log_signins:
                 logging.info("User %s is logging in.", session["user"].get("email"))
         if session.get("url"):
             url = session["url"]
             del session["url"]
             return redirect(url)
-        return {'status': 'ok', 'content': 'User logged in successfully.'}
+        return {"status": "ok", "content": "User logged in successfully."}
 
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
         if request.args.get("redirect_url"):
             # If redirect_uri is provided, use it
-            session['url'] = unquote(request.args.get("redirect_url"))
+            session["url"] = unquote(request.args.get("redirect_url"))
 
         request_state = self.clerk_client.authenticate_request(
             request,
@@ -531,13 +534,17 @@ class ClerkAuth(Auth):
         return False
 
     def set_loggedin_if_user_session(self, response: Response):
-        ''' Set the response data to indicate if the user is logged in.'''
-        if session.get("user") and request.path == '/_dash-update-component':
+        """Set the response data to indicate if the user is logged in."""
+        if session.get("user") and request.path == "/_dash-update-component":
             response_data = response.json
             sideUpdate = response_data.get("sideUpdate", {})
-            response_data['sideUpdate'] = {**sideUpdate, "clerk_logged_in": {"data": True}}
+            response_data["sideUpdate"] = {
+                **sideUpdate,
+                "clerk_logged_in": {"data": True},
+            }
             return flask.make_response(response_data)
         return response
+
 
 def get_clerk_auth(app: dash.Dash = None) -> OAuth:
     """Retrieve the Clerk object.
