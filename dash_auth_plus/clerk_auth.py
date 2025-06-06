@@ -281,13 +281,13 @@ class ClerkAuth(Auth):
 
                                             // CRITICAL: Always call load() to ensure Clerk initializes properly
                                             window.Clerk.load().then(() => {
-                                                console.log('[Clerk] Ready');
 
                                                 // Set up session sync listener
                                                 if (window.Clerk.addListener) {
                                                     window.Clerk.addListener((resources) => {
                                                         // Store auth state in localStorage for persistence
                                                         if (resources.user && resources.session) {
+                                                            window._clerk_logged_in = true;
                                                             if (window.location.pathname === '/auth_callback') {
                                                                 fetch(window.location.pathname, {
                                                                     method: 'POST',
@@ -302,6 +302,14 @@ class ClerkAuth(Auth):
                                                                     }
                                                                 });
                                                             }
+                                                        }
+                                                        else if (window._clerk_logged_in) {
+                                                            window._clerk_logged_in = false;
+                                                            console.log('session ended, logging out');
+                                                            """ + f"""window.location.pathname = '{self.logout_route}';""" + """
+                                                        }
+                                                        else {
+                                                            window._clerk_logged_in = false;
                                                         }
 
                                                     });
@@ -348,63 +356,19 @@ class ClerkAuth(Auth):
                 if not self.initialized:
                     return index_string
 
-                # Add enhanced styles for hover effects and transitions
-                enhanced_styles = f"""
-                <style>
-                    /* Enhanced avatar and dropdown styles following UI/UX best practices */
-                    #clerk-user-avatar {{
-                        transition: {DESIGN_TOKENS['transitions']['medium']};
-                        box-shadow: 0 2px 4px {DESIGN_TOKENS['colors']['shadow']};
-                    }}
-
-                    #clerk-user-avatar:hover {{
-                        transform: scale(1.05);
-                        box-shadow: 0 4px 8px {DESIGN_TOKENS['colors']['shadow']};
-                    }}
-
-                    /* Dropdown menu animations */
-                    #clerk-menu-dropdown {{
-                        opacity: 0;
-                        transform: translateY(-10px);
-                        transition: opacity 0.2s ease, transform 0.2s ease;
-                        pointer-events: none;
-                    }}
-
-                    #clerk-menu-dropdown[style*="display: block"] {{
-                        opacity: 1;
-                        transform: translateY(0);
-                        pointer-events: auto;
-                    }}
-
-                    /* Button hover effects */
-                    #clerk-login-button:hover,
-                    #clerk-profile-button:hover,
-                    #clerk-logout-menu-item:hover {{
-                        transform: translateY(-1px);
-                        box-shadow: 0 2px 8px {DESIGN_TOKENS['colors']['shadow']};
-                    }}
-
-                    #clerk-login-button:active,
-                    #clerk-profile-button:active,
-                    #clerk-logout-menu-item:active {{
-                        transform: translateY(0);
-                        box-shadow: 0 1px 4px {DESIGN_TOKENS['colors']['shadow']};
-                    }}
-                </style>
-                """
-
                 if clerk_script and "</head>" in index_string:
                     # Inject scripts and styles before closing head tag
                     index_string = index_string.replace(
                         "</head>",
-                        f"{self.clerk_script}\n{enhanced_styles}\n    </head>",
+                        f"{self.clerk_script}\n</head>",
                     )
 
                 return index_string
 
         else:
-            app.index_string = (
-                app.index_string.split("</body>")[0] + clerk_script + "</body>"
+            app.index_string.replace(
+                "</head>",
+                f"{self.clerk_script}\n</head>",
             )
 
     def _create_redirect_uri(self):
