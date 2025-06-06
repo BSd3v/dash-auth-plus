@@ -289,7 +289,6 @@ class ClerkAuth(Auth):
 
                                             // CRITICAL: Always call load() to ensure Clerk initializes properly
                                             window.Clerk.load().then(() => {
-                                                
                                                 // Set up session sync listener
                                                 if (window.Clerk.addListener) {
                                                     window.Clerk.addListener((resources) => {
