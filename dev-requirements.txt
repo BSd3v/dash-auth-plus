@@ -6,3 +6,6 @@ werkzeug
 pytest
 authlib
 black
+clerk-sdk
+clerk-backend-api==3.0.1
+python-dotenv

@@ -11,6 +11,7 @@ from .group_protection import (
 # oidc auth requires authlib, install with `pip install dash-auth-plus[oidc]`
 try:
     from .oidc_auth import OIDCAuth, get_oauth
+    from .clerk_auth import ClerkAuth, get_clerk_auth
 except ModuleNotFoundError:
     pass
 from .version import __version__, __plotly_dash_auth_version__
@@ -27,6 +28,8 @@ __all__ = [
     "public_callback",
     "BasicAuth",
     "OIDCAuth",
+    "ClerkAuth",
+    "get_clerk_auth",
     "__version__",
     "__plotly_dash_auth_version__",
 ]
