@@ -4,12 +4,13 @@ import traceback
 from typing import Dict, List, Optional, Union, Callable
 
 import dash
+import flask
 from authlib.integrations.flask_client import OAuth
 from dash_auth_plus.auth import Auth
 from flask import Response, redirect, request, session, jsonify
 from werkzeug.routing import Map, Rule
 from dotenv import load_dotenv
-from urllib.parse import urljoin, quote
+from urllib.parse import urljoin, quote, unquote
 
 load_dotenv()
 
@@ -184,6 +185,7 @@ class ClerkAuth(Auth):
         self.login_route = "/login"
         self.logout_route = "/logout"
         self.authenticate_request_options = AuthenticateRequestOptions
+        self.app.server.after_request(self.set_loggedin_if_user_session)
         host = app.server.config.get("SERVER_NAME") or "127.0.0.1"
         port = app.server.config.get("SERVER_PORT", 8050)
         self.allowed_parties = (
@@ -282,37 +284,44 @@ class ClerkAuth(Auth):
 
                                             // CRITICAL: Always call load() to ensure Clerk initializes properly
                                             window.Clerk.load().then(() => {
-
+                                                
                                                 // Set up session sync listener
                                                 if (window.Clerk.addListener) {
                                                     window.Clerk.addListener((resources) => {
+                                                        var clerk_logged_in = JSON.parse(localStorage.getItem('clerk_logged_in', 'false'));
                                                         // Store auth state in localStorage for persistence
                                                         if (resources.user && resources.session) {
-                                                            window._clerk_logged_in = true;
-                                                            if (window.location.pathname === '/auth_callback') {
-                                                                fetch(window.location.pathname, {
+                                                            if (!clerk_logged_in) {
+                                                                var callbackUrl = window.location.origin + (window.pathname == '/auth_callback' ? window.pathname : '/auth_callback?redirect_url=' + encodeURIComponent(window.location.href))
+                                                                fetch(callbackUrl, {
                                                                     method: 'POST',
                                                                     redirect: 'follow',
                                                                     credentials: 'same-origin'
                                                                 }).then(response => {
+                                                                    localStorage.setItem('clerk_logged_in', true);
                                                                     if (response.redirected) {
                                                                         window.location.href = response.url;
-                                                                    } else if (response.ok) {
-                                                                        // Optionally reload or handle the response
-                                                                        window.location.reload();
                                                                     }
                                                                 });
+                                                            } else {
+                                                                console.log('Clerk session updated');
                                                             }
                                                         }
-                                                        else if (window._clerk_logged_in) {
-                                                            window._clerk_logged_in = false;
+                                                        else if (clerk_logged_in) {
+                                                            localStorage.setItem('clerk_logged_in', false);
                                                             console.log('session ended, logging out');
+                                                            document.cookie.split(";").forEach((cookie) => {
+                                                              const eqPos = cookie.indexOf("=");
+                                                              const name = eqPos > -1 ? cookie.substr(0, eqPos) : cookie;
+                                                              document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+                                                            });
                                                             """
-            + f"""window.location.pathname = '{self.logout_route}';"""
+            + f"""newLoc = window.location.origin + '{self.logout_route}';"""
             + """
+                                                            window.location.href = newLoc;
                                                         }
                                                         else {
-                                                            window._clerk_logged_in = false;
+                                                            localStorage.setItem('clerk_logged_in', false);
                                                         }
 
                                                     });
@@ -352,7 +361,8 @@ class ClerkAuth(Auth):
             # Use the new OAuth2App class for Dash 3+
             @dash.hooks.layout()
             def append_clerk_url(layout):
-                return [dash.dcc.Location(id="_clerk_login_url", refresh=True), layout]
+                return [dash.dcc.Location(id="_clerk_login_url", refresh=True),
+                    dash.dcc.Store(id='clerk_logged_in', storage_type='local'), layout]
 
             @dash.hooks.index()
             def add_clerk_script(index_string):
@@ -465,12 +475,12 @@ class ClerkAuth(Auth):
                 "session_id": sid,
             }
             if callable(self._user_groups):
-                session["user"]["groups"] = self._user_groups(user.get("email")) + (
+                session["user"]["groups"] = self._user_groups(email) + (
                     session["user"].get("groups") or []
                 )
             elif self._user_groups:
                 session["user"]["groups"] = self._user_groups.get(
-                    user.get("email"), []
+                    email, []
                 ) + (session["user"].get("groups") or [])
             if self.log_signins:
                 logging.info("User %s is logging in.", session["user"].get("email"))
@@ -478,9 +488,14 @@ class ClerkAuth(Auth):
             url = session["url"]
             del session["url"]
             return redirect(url)
+        return {'status': 'ok', 'content': 'User logged in successfully.'}
 
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
+        if request.args.get("redirect_url"):
+            # If redirect_uri is provided, use it
+            session['url'] = unquote(request.args.get("redirect_url"))
+
         request_state = self.clerk_client.authenticate_request(
             request,
             self.authenticate_request_options(
@@ -515,6 +530,14 @@ class ClerkAuth(Auth):
             return True
         return False
 
+    def set_loggedin_if_user_session(self, response: Response):
+        ''' Set the response data to indicate if the user is logged in.'''
+        if session.get("user") and request.path == '/_dash-update-component':
+            response_data = response.json
+            sideUpdate = response_data.get("sideUpdate", {})
+            response_data['sideUpdate'] = {**sideUpdate, "clerk_logged_in": {"data": True}}
+            return flask.make_response(response_data)
+        return response
 
 def get_clerk_auth(app: dash.Dash = None) -> OAuth:
     """Retrieve the Clerk object.
