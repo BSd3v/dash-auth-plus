@@ -268,7 +268,8 @@ class ClerkAuth(Auth):
             </script>"""
 
         # Enhanced initialization with smart auth checking
-        init_script = """
+        init_script = (
+            """
                         <script>
                             // Helper to ensure Clerk is ready
                             window.waitForClerk = function() {
@@ -306,7 +307,9 @@ class ClerkAuth(Auth):
                                                         else if (window._clerk_logged_in) {
                                                             window._clerk_logged_in = false;
                                                             console.log('session ended, logging out');
-                                                            """ + f"""window.location.pathname = '{self.logout_route}';""" + """
+                                                            """
+            + f"""window.location.pathname = '{self.logout_route}';"""
+            + """
                                                         }
                                                         else {
                                                             window._clerk_logged_in = false;
@@ -341,6 +344,7 @@ class ClerkAuth(Auth):
                             });
                         </script>
                         """
+        )
 
         self.clerk_script = f"{clerk_script}\n{init_script}\n"
 
