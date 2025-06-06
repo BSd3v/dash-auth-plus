@@ -296,7 +296,7 @@ class ClerkAuth(Auth):
                                                         // Store auth state in localStorage for persistence
                                                         if (resources.user && resources.session) {
                                                             if (!clerk_logged_in) {
-                                                                var callbackUrl = window.location.origin + (window.pathname == '/auth_callback' ? window.pathname : '/auth_callback?redirect_url=' + encodeURIComponent(window.location.href))
+                                                                var callbackUrl = window.location.origin + (window.location.pathname == '/auth_callback' ? window.location.pathname : '/auth_callback?redirect_url=' + encodeURIComponent(window.location.href))
                                                                 fetch(callbackUrl, {
                                                                     method: 'POST',
                                                                     redirect: 'follow',
