@@ -562,3 +562,15 @@ register_page('private', path_template="/user/{user_id}/private", layout=user_pr
 if __name__ == "__main__":
     app.run(debug=True)
 ```
+
+Important things to note about ClerkAuth:
+- if you are using your own logout method, you will need to have the `clerk_logged_in` local storage variable set to `false` to ensure the user is logged out.
+- this can be done by a script similar to the following:
+```html
+<!-- Client-Side Logout State Reset -->
+<script>
+  // Reset the client-side authentication flag on logout
+  localStorage.setItem('clerk_logged_in', 'false');
+</script>
+```
+- The `Clerk` api is available in the browser, so you have access to all the api methods available in the Clerk documentation.
