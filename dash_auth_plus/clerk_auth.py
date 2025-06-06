@@ -273,6 +273,11 @@ class ClerkAuth(Auth):
         init_script = (
             """
                         <script>
+                            """
+            + f"if (window.location.pathname == '{self.logout_route}') "
+            + """{
+                                localStorage.setItem('clerk_logged_in', false)
+                            }
                             // Helper to ensure Clerk is ready
                             window.waitForClerk = function() {
                                 return new Promise((resolve) => {
@@ -442,6 +447,7 @@ class ClerkAuth(Auth):
             <div>Logged out successfully</div>
             <div><a href="{self.app.config.get("url_base_pathname") or "/"}">Go back</a></div>
         </div>
+        {self.clerk_script}
         """,
             mimetype="text/html",
         )
