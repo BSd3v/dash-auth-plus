@@ -279,7 +279,7 @@ class ClerkAuth(Auth):
                                 localStorage.setItem('clerk_logged_in', false)
                             }
                             // Helper to ensure Clerk is ready
-                            window.waitForClerk = function() {
+                            var waitForClerk = function() {
                                 return new Promise((resolve) => {
                                     let attempts = 0;
                                     const interval = setInterval(() => {
@@ -292,10 +292,13 @@ class ClerkAuth(Auth):
                                                 // Set up session sync listener
                                                 if (window.Clerk.addListener) {
                                                     window.Clerk.addListener((resources) => {
-                                                        var clerk_logged_in = JSON.parse(localStorage.getItem('clerk_logged_in', 'false'));
+                                                        var clerk_logged_in = JSON.parse(localStorage.getItem('clerk_logged_in')) || false;
                                                         // Store auth state in localStorage for persistence
                                                         if (resources.user && resources.session) {
+                                                            window?.dash_clientside?.set_props('clerk_user_update', {data: new Date().toISOString()});
                                                             if (!clerk_logged_in) {
+                                                                console.log('logging in Clerk user');
+                                                                setTimeout(() => {
                                                                 var callbackUrl = window.location.origin + (window.location.pathname == '/auth_callback' ? window.location.pathname : '/auth_callback?redirect_url=' + encodeURIComponent(window.location.href))
                                                                 fetch(callbackUrl, {
                                                                     method: 'POST',
@@ -303,10 +306,9 @@ class ClerkAuth(Auth):
                                                                     credentials: 'same-origin'
                                                                 }).then(response => {
                                                                     localStorage.setItem('clerk_logged_in', true);
-                                                                    if (response.redirected) {
-                                                                        window.location.href = response.url;
-                                                                    }
+                                                                    window.location.href = response.url;
                                                                 });
+                                                                }, 400);
                                                             } else {
                                                                 console.log('Clerk session updated');
                                                             }
@@ -314,11 +316,6 @@ class ClerkAuth(Auth):
                                                         else if (clerk_logged_in) {
                                                             localStorage.setItem('clerk_logged_in', false);
                                                             console.log('session ended, logging out');
-                                                            document.cookie.split(";").forEach((cookie) => {
-                                                              const eqPos = cookie.indexOf("=");
-                                                              const name = eqPos > -1 ? cookie.substr(0, eqPos) : cookie;
-                                                              document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
-                                                            });
                                                             """
             + f"""newLoc = window.location.origin + '{self.logout_route}';"""
             + """
@@ -333,12 +330,14 @@ class ClerkAuth(Auth):
 
                                                 resolve(window.Clerk);
                                             }).catch(err => {
+                                                console.error('Clerk load failed:', err);
                                                 // Clerk load failed
                                                 resolve(null);
                                             });
                                         }
                                         if (attempts > 100) {
                                             clearInterval(interval);
+                                            console.warn('Clerk not initialized after multiple attempts');
                                             // Clerk not found after timeout
                                             resolve(null);
                                         }
@@ -348,7 +347,7 @@ class ClerkAuth(Auth):
 
                             // Initialize on load
                             document.addEventListener('DOMContentLoaded', () => {
-                                window.waitForClerk().then(clerk => {
+                                waitForClerk().then(clerk => {
                                     if (clerk) {
                                         // Dispatch event to trigger initial auth check
                                         window.dispatchEvent(new Event('clerk-loaded'));
@@ -368,6 +367,7 @@ class ClerkAuth(Auth):
                 return [
                     dash.dcc.Location(id="_clerk_login_url", refresh=True),
                     dash.dcc.Store(id="clerk_logged_in", storage_type="local"),
+                    dash.dcc.Store(id="clerk_user_update", storage_type="local"),
                     layout,
                 ]
 
@@ -540,34 +540,35 @@ class ClerkAuth(Auth):
 
     def set_loggedin_if_user_session(self, response: Response):
         """Set the response data to indicate if the user is logged in."""
-        if session.get("user") and request.path == "/_dash-update-component":
-            response_data = response.json
-            sideUpdate = response_data.get("sideUpdate", {})
-            response_data["sideUpdate"] = {
-                **sideUpdate,
-                "clerk_logged_in": {"data": True},
-            }
-            return flask.make_response(response_data)
+        try:
+            if session.get("user") and request.path == "/_dash-update-component":
+                response_data = response.json
+                sideUpdate = response_data.get("sideUpdate", {})
+                response_data["sideUpdate"] = {
+                    **sideUpdate,
+                    "clerk_logged_in": {"data": True},
+                }
+                return flask.make_response(response_data)
+        except:
+            logging.error(
+                "Error setting logged in state: %s\n%s",
+                traceback.format_exc(),
+                exc_info=True,
+            )
+            pass
         return response
 
+    def get_user_data(self):
+        request_state = self.clerk_client.authenticate_request(
+            request,
+            self.authenticate_request_options(
+                authorized_parties=self.allowed_parties,
+            ),
+        )
 
-def get_clerk_auth(app: dash.Dash = None) -> OAuth:
-    """Retrieve the Clerk object.
-
-    :param app: dash.Dash
-        Dash app or None, if None the current app is used
-        calling `dash.get_app()`
-    """
-    if app is None:
-        app = dash.get_app()
-
-    auth = getattr(app.server, "extensions", {}).get(
-        "authlib.integrations.flask_client"
-    )
-    if auth is not None:
-        return auth
-
-    raise RuntimeError(
-        "Clerk object is not yet defined. `ClerkAuth(app, **kwargs)` needs "
-        "to be run before `get_clerk_auth` is called."
-    )
+        if request_state.is_signed_in:
+            sid = request_state.payload.get("sid")
+            sess = self.clerk_client.sessions.get(session_id=sid)
+            user_data = self.clerk_client.users.get(user_id=sess.user_id)
+            return user_data.__dict__
+        return False  # "user not authenticated"
