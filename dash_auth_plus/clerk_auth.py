@@ -542,14 +542,14 @@ class ClerkAuth(Auth):
         """Set the response data to indicate if the user is logged in."""
         try:
             if session.get("user") and request.path == "/_dash-update-component":
-                response_data = response.json
+                response_data = response.get_json()
                 sideUpdate = response_data.get("sideUpdate", {})
                 response_data["sideUpdate"] = {
                     **sideUpdate,
                     "clerk_logged_in": {"data": True},
                 }
                 return flask.make_response(response_data)
-        except:
+        except Exception:
             logging.error(
                 "Error setting logged in state: %s\n%s",
                 traceback.format_exc(),
