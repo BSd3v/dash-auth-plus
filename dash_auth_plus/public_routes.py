@@ -71,15 +71,15 @@ def public_callback(*callback_args, **callback_kwargs):
     def decorator(func):
 
         wrapped_func = callback(*callback_args, **callback_kwargs)(func)
-        callback_id = next(
-            (
-                k
-                for k, v in GLOBAL_CALLBACK_MAP.items()
-                if inspect.getsource(v["callback"]) == inspect.getsource(func)
-            ),
-            None,
-        )
         try:
+            callback_id = next(
+                (
+                    k
+                    for k, v in GLOBAL_CALLBACK_MAP.items()
+                    if inspect.getsource(v["callback"]) == inspect.getsource(func)
+                ),
+                None,
+            )
             app = get_app()
             app.server.config[PUBLIC_CALLBACKS] = get_public_callbacks(app) + [
                 callback_id

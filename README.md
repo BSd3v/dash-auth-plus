@@ -490,3 +490,87 @@ Passing `auth_protect_layouts_kwargs` is the same are the additional `kwargs` pa
 By default, the app will check any non-public callback that has the `pathname` as an input, 
 when you pass `page_container` as the `id` of your container element for a page container,
 it will only check the route if it is an output.
+
+## Example Usage with ClerkAuth
+
+```python
+from dash import Dash, html, dcc, page_container
+from dash_auth_plus import ClerkAuth, public_callback
+from dash import Input, Output, register_page
+
+app = Dash(__name__, use_pages=True, pages_folder='', suppress_callback_exceptions=True)
+
+# Initialize ClerkAuth with public routes
+auth = ClerkAuth(
+    app,
+    secret_key="aStaticSecretKey!",
+    log_signins=True,
+    auth_protect_layouts=True,
+    page_container='_pages_content',
+    public_routes=['/', '/user/<user_id>/public'],
+)
+
+# Main layout with navigation
+app.layout = html.Div(
+    [
+        html.Div(
+            [
+                dcc.Link("Home", href="/"),
+                dcc.Link("John Doe", href="/user/john_doe/public"),
+                dcc.Link('Logout', href='/logout', refresh=True),
+            ],
+            style={"display": "flex", "gap": "1rem", "background": "lightgray", "padding": "0.5rem 1rem"},
+        ),
+        page_container,
+    ],
+    style={"display": "flex", "flexDirection": "column"},
+)
+
+# Home page (public)
+home_layout = [
+    html.H1("Home Page"),
+    html.Button("Click me", id="home-button"),
+    html.Div(id="home-contents"),
+]
+register_page('home', "/", layout=home_layout)
+
+@public_callback(
+    Output("home-contents", "children"),
+    Input("home-button", "n_clicks"),
+)
+def home(n_clicks):
+    if not n_clicks:
+        return "You haven't clicked the button."
+    return f"You clicked the button {n_clicks} times"
+
+# Public user page
+def user_layout(user_id: str, **kwargs):
+    return [
+        html.H1(f"User {user_id} (public)"),
+        dcc.Link("Authenticated user content", href=f"/user/{user_id}/private"),
+    ]
+register_page('user', path_template="/user/<user_id>/public", layout=user_layout)
+
+# Private user page (protected)
+def user_private(user_id: str, **kwargs):
+    return [
+        html.H1(f"User {user_id} (authenticated only)"),
+        html.Div("Members-only information"),
+    ]
+register_page('private', path_template="/user/{user_id}/private", layout=user_private)
+
+if __name__ == "__main__":
+    app.run(debug=True)
+```
+
+Important things to note about ClerkAuth:
+- if you are using your own logout method, you will need to have the `clerk_logged_in` local storage variable set to `false` to ensure the user is logged out.
+- this can be done by a script similar to the following:
+```html
+<!-- Client-Side Logout State Reset -->
+<script>
+  // Reset the client-side authentication flag on logout
+  localStorage.setItem('clerk_logged_in', 'false');
+</script>
+```
+- The `Clerk` api is available in the browser, so you have access to all the api methods available in the Clerk documentation.
