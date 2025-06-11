@@ -267,7 +267,8 @@ class ClerkAuth(Auth):
                 data-clerk-publishable-key="{self.clerk_publishable_key}"
                 src="{self.clerk_domain}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
                 type="text/javascript">
-            </script>"""
+            </script>
+        """
 
         # Enhanced initialization with smart auth checking
         init_script = (
@@ -368,6 +369,7 @@ class ClerkAuth(Auth):
                     dash.dcc.Location(id="_clerk_login_url", refresh=True),
                     dash.dcc.Store(id="clerk_logged_in", storage_type="local"),
                     dash.dcc.Store(id="clerk_user_update", storage_type="local"),
+                    dash.dcc.Store(id="show_user_profile", data=False),
                     layout,
                 ]
 
