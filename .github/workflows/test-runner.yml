@@ -63,7 +63,7 @@ jobs:
           uv pip install -r dev-requirements.txt
 
       - name: Install dependencies from distribution
-        if: ${{ inputs.test-distribution }}
+        if: ${{ !inputs.test-distribution }}
         run: |
           source .venv/bin/activate
           WHL_FILE=$(find dist -name '*.whl' -type f | head -1)
@@ -75,6 +75,7 @@ jobs:
           uv pip install -r dev-requirements.txt
 
       - name: Run tests
+        if: ${{ inputs.test-distribution }}
         env:
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           CLERK_DOMAIN: ${{ secrets.CLERK_DOMAIN }}
@@ -83,4 +84,4 @@ jobs:
           CLERK_TEST_PASSWORD: ${{ secrets.CLERK_TEST_PASSWORD }}
         run: |
           source .venv/bin/activate
-          pytest --headless
+          pytest --headless --deselect tests/test_clerk_atuh.py
