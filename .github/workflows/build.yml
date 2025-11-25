@@ -11,10 +11,8 @@ on:
         type: string
 
 jobs:
-  build-and-validate:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: test
     permissions:
       contents: write
     steps:
@@ -25,14 +23,6 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ inputs.python-version }}
-      - name: 'Setup Chrome and chromedriver'
-        uses: nanasess/setup-chromedriver@v2
-      - name: 'Setup chromedriver environment'
-        run: |
-            export DISPLAY=:99
-            chromedriver --url-base=/wd/hub &
-      - name: Start XVFB
-        run: Xvfb :99 &
       - name: Setup dependencies
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -46,23 +36,16 @@ jobs:
           source .venv/bin/activate
           npm run dist
         shell: bash
-      - name: Validate distribution
-        env:
-          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
-          CLERK_DOMAIN: ${{ secrets.CLERK_DOMAIN }}
-          CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
-          CLERK_TEST_USER: ${{ secrets.CLERK_TEST_USER }}
-          CLERK_TEST_PASSWORD: ${{ secrets.CLERK_TEST_PASSWORD }}
-        run: |
-          uv venv test-dist
-          source test-dist/bin/activate
-          WHL_FILE=$(ls dist/*.whl)
-          uv pip install "${WHL_FILE}"
-          uv pip install -r dev-requirements.txt
-          pytest --headless
-        shell: bash
       - name: Upload Python distributions
         uses: actions/upload-artifact@v4
         with:
           name: python-distributions
           path: dist/
+
+  validate:
+    needs: build
+    uses: ./.github/workflows/test-runner.yml
+    with:
+      python-version: ${{ inputs.python-version }}
+      test-distribution: true
+    secrets: inherit
