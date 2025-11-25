@@ -74,7 +74,7 @@ jobs:
           uv pip install -r dev-requirements.txt
       
       - name: Run tests
-        if: ${{ inputs.test-distribution }}
+        if: ${{ !inputs.test-distribution }}
         env:
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           CLERK_DOMAIN: ${{ secrets.CLERK_DOMAIN }}
@@ -86,7 +86,7 @@ jobs:
           pytest --headless
           
       - name: Run tests
-        if: ${{ !inputs.test-distribution }}
+        if: ${{ inputs.test-distribution }}
         env:
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           CLERK_DOMAIN: ${{ secrets.CLERK_DOMAIN }}
