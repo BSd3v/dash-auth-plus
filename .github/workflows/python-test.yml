@@ -14,9 +14,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    environment:
+      name: test
     strategy:
       matrix:
-        python-version: ["3.8", "3.12"]
+        python-version: ["3.10", "3.12"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -54,6 +57,12 @@ jobs:
           npm run lint
 
       - name: Run tests
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          CLERK_DOMAIN: ${{ secrets.CLERK_DOMAIN }}
+          CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          CLERK_TEST_USER: ${{ secrets.CLERK_TEST_USER }}
+          CLERK_TEST_PASSWORD: ${{ secrets.CLERK_TEST_PASSWORD }}
         run: |
           source .venv/bin/activate
           pytest --headless
