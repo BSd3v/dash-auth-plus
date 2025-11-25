@@ -64,7 +64,11 @@ jobs:
         if: ${{ inputs.test-distribution }}
         run: |
           source .venv/bin/activate
-          WHL_FILE=$(ls dist/*.whl)
+          WHL_FILE=$(find dist -name '*.whl' -type f | head -1)
+          if [ -z "$WHL_FILE" ]; then
+            echo "Error: No wheel file found in dist/"
+            exit 1
+          fi
           uv pip install "${WHL_FILE}"
           uv pip install -r dev-requirements.txt
 
