@@ -95,4 +95,4 @@ jobs:
           CLERK_TEST_PASSWORD: ${{ secrets.CLERK_TEST_PASSWORD }}
         run: |
           source .venv/bin/activate
-          pytest --headless --deselect tests/test_clerk_atuh.py
+          pytest --headless --deselect tests/test_clerk_auth.py
