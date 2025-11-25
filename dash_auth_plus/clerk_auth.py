@@ -467,7 +467,7 @@ class ClerkAuth(Auth):
                 return super().after_logged_in(user, idp, token)
         """
         if self.login_user_callback:
-            return self.login_user_callback(user, "clerk")
+            return self.login_user_callback(user, "clerk", sid)
         elif user:
             email = (
                 [

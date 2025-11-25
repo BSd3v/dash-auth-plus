@@ -1,1 +1,2 @@
 include README.md
+include dash_auth_plus/*
