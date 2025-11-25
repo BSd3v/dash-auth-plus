@@ -44,6 +44,8 @@ jobs:
 
   validate:
     needs: build
+    permissions:
+      contents: read
     uses: ./.github/workflows/test-runner.yml
     with:
       python-version: ${{ inputs.python-version }}
