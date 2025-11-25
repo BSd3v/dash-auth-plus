@@ -46,7 +46,7 @@ jobs:
     needs: build
     permissions:
       contents: read
-    uses: ./.github/workflows/test-runner.yml
+    uses: ./.github/workflows/test-runner.yml@main
     with:
       python-version: ${{ inputs.python-version }}
       test-distribution: true
