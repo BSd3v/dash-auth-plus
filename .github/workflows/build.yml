@@ -13,6 +13,8 @@ on:
 jobs:
   build-and-validate:
     runs-on: ubuntu-latest
+    environment:
+      name: test
     permissions:
       contents: write
     steps:
