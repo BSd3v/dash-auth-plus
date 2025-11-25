@@ -1,2 +1,2 @@
-__version__ = "0.0.1a1"
+__version__ = "0.0.1a2"
 __plotly_dash_auth_version__ = "2.3.0"
