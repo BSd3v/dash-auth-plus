@@ -2,6 +2,7 @@ from selenium.webdriver.common.keys import Keys
 from dash import Dash, html, dcc, page_container
 from dash_auth_plus import ClerkAuth
 import os
+import pytest
 
 def spinup_app():
     from dash import Dash, html, dcc, page_container
@@ -69,6 +70,16 @@ def spinup_app():
     register_page('private', path_template="/user/<user_id>/private", layout=user_private)
     return app, auth
 
+@pytest.mark.skipif(
+    not all([
+        os.getenv('CLERK_SECRET_KEY'),
+        os.getenv('CLERK_DOMAIN'),
+        os.getenv('CLERK_PUBLISHABLE_KEY'),
+        os.getenv('CLERK_TEST_USER'),
+        os.getenv('CLERK_TEST_PASSWORD')
+    ]),
+    reason="Clerk credentials not available (requires CLERK_SECRET_KEY, CLERK_DOMAIN, CLERK_PUBLISHABLE_KEY, CLERK_TEST_USER, CLERK_TEST_PASSWORD)"
+)
 def test_clerk_auth_flow(dash_duo):
     app, auth = spinup_app()
 
