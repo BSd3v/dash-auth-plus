@@ -1,2 +1,4 @@
 include README.md
 include dash_auth_plus/*
+recursive-include dash_auth_plus/DashAuthComponents *.py *.js *.json *.txt *.map
+recursive-include dash_auth_plus_components *.py *.js *.json *.txt *.map

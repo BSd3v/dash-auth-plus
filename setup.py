@@ -12,7 +12,7 @@ setup(
     version=main_ns["__version__"],
     author="Bryan Schroeder",
     author_email="bryan.ri.schroeder@gmail.com",
-    packages=["dash_auth_plus", "dash_auth_plus.DashAuthComponents"],
+    packages=["dash_auth_plus", "dash_auth_plus.DashAuthComponents", "dash_auth_plus_components"],
     license="MIT",
     description="Dash Authorization Package.",
     long_description=long_description,
