@@ -12,7 +12,7 @@ setup(
     version=main_ns["__version__"],
     author="Bryan Schroeder",
     author_email="bryan.ri.schroeder@gmail.com",
-    packages=["dash_auth_plus", "dash_auth_plus.DashAuthComponents"],
+    packages=["dash_auth_plus", "dash_auth_plus.DashAuthComponents", "dash_auth_plus_components"],
     license="MIT",
     description="Dash Authorization Package.",
     long_description=long_description,
@@ -25,7 +25,7 @@ setup(
     ],
     extras_require={
         "oidc": ["authlib"],
-        "clerk": ["clerk-sdk", "clerk-backend-api==3.0.1"],
+        "clerk": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"],
         "all": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"]
     },
     python_requires=">=3.8",
