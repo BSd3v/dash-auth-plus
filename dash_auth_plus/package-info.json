@@ -12,7 +12,7 @@
     "build": "npm run build:js && npm run build:backends && npm run build:fix-n-copy && npm run build:cleanup",
     "build:js": "webpack --mode production",
     "build:fix-n-copy": "black dash_auth_plus_components/*.py && cpy dash_auth_plus_components/* dash_auth_plus/DashAuthComponents",
-    "build:cleanup": "mv dash_auth_plus_components/package-info.json dash_auth_plus/ && rimraf dash_auth_plus_components"
+    "build:cleanup": "mv dash_auth_plus_components/package-info.json dash_auth_plus/"
   },
   "author": "Bryan Schroeder <bryan.ri.schroeder@gmail.com>",
   "license": "MIT",

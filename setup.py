@@ -1,15 +1,15 @@
 from setuptools import setup
+import json
 
-main_ns = {}
-with open("dash_auth_plus/version.py", encoding="utf-8") as f:
-    exec(f.read(), main_ns)
+with open("dash_auth_plus/package-info.json", encoding="utf-8") as f:
+    main_ns = json.loads(f.read())
 
 with open("README.md", encoding="utf-8") as f:
     long_description = f.read()
 
 setup(
     name="dash_auth_plus",
-    version=main_ns["__version__"],
+    version=main_ns["version"],
     author="Bryan Schroeder",
     author_email="bryan.ri.schroeder@gmail.com",
     packages=["dash_auth_plus", "dash_auth_plus.DashAuthComponents"],
@@ -17,16 +17,11 @@ setup(
     description="Dash Authorization Package.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    install_requires=[
-        "dash>=1.1.1",
-        "flask",
-        "werkzeug",
-        "python-dotenv"
-    ],
+    install_requires=["dash>=1.1.1", "flask", "werkzeug", "python-dotenv"],
     extras_require={
         "oidc": ["authlib"],
         "clerk": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"],
-        "all": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"]
+        "all": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"],
     },
     python_requires=">=3.8",
     include_package_data=True,

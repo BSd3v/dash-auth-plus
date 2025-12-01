@@ -9,13 +9,14 @@ from .group_protection import (
 )
 
 # oidc auth requires authlib, install with `pip install dash-auth-plus[oidc]`
+# clerk auth requires authlib, clerk-sdk, clerk-backend-api, install with `pip install dash-auth-plus[clerk]`
 try:
     from .oidc_auth import OIDCAuth, get_oauth
     from .clerk_auth import ClerkAuth
     import DashAuthComponents
 except ModuleNotFoundError:
     pass
-from .version import __version__, __plotly_dash_auth_version__
+from ._version import __version__, __plotly_dash_auth_version__
 
 
 __all__ = [
