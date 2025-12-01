@@ -1,8 +1,0 @@
-{
-  "name": "dash_auth_plus",
-  "version": "0.0.1a3",
-  "description": "Dash Authorization Package with Clerk components",
-  "main": "dash_auth_plus.js",
-  "author": "Bryan Schroeder",
-  "license": "MIT"
-}
