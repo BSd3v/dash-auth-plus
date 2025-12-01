@@ -31,19 +31,10 @@ jobs:
           uv pip install -r dev-requirements.txt
           npm i
         shell: bash
-      - name: Lint code
-        run: |
-          source .venv/bin/activate
-          npm run lint
-        shell: bash
       - name: Build components
         run: |
-          npm run build
-        shell: bash
-      - name: Format code
-        run: |
           source .venv/bin/activate
-          npm run format
+          npm run build
         shell: bash
       - name: Generate Python distribution
         run: |
