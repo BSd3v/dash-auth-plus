@@ -44,3 +44,5 @@ man/
 src/jl/
 *.jl
 deps/
+dash_auth_plus/DashAuthComponents
+dash_auth_plus_components
