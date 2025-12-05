@@ -8,7 +8,7 @@ const themes = {
 };
 
 export interface ClerkProviderProps {
-    PUBLISHABLE_KEY: string;
+    publishableKey: string;
     afterSignOutUrl?: string;
     children: React.ReactNode;
     themeName?: string;
@@ -18,7 +18,7 @@ export interface ClerkProviderProps {
 
 
 const ClerkProvider: React.FC<PropsWithChildren<ClerkProviderProps>> = ({
-  PUBLISHABLE_KEY,
+  publishableKey,
   afterSignOutUrl,
   children,
   themeName,
@@ -32,7 +32,7 @@ const ClerkProvider: React.FC<PropsWithChildren<ClerkProviderProps>> = ({
 
   return (
     <ClerkClerkProvider
-      publishableKey={PUBLISHABLE_KEY}
+      publishableKey={publishableKey}
       afterSignOutUrl={afterSignOutUrl}
       appearance={appearance}
       {...others}
