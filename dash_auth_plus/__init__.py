@@ -13,7 +13,7 @@ from .group_protection import (
 try:
     from .oidc_auth import OIDCAuth, get_oauth
     from .clerk_auth import ClerkAuth
-    from .DashAuthComponents import *
+    from . import DashAuthComponents
 except ModuleNotFoundError:
     pass
 from ._version import __version__, __plotly_dash_auth_version__
