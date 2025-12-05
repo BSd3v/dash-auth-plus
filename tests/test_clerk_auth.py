@@ -22,7 +22,7 @@ def spinup_app():
     app.layout = html.Div(
         [
             DashAuthComponents.ClerkProvider(
-                publishable_key=os.getenv("CLERK_PUBLISHABLE_KEY")
+                publishableKey=os.getenv("CLERK_PUBLISHABLE_KEY")
             ),
             html.Div(
                 [
