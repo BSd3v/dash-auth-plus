@@ -25,16 +25,21 @@ const ClerkProvider: React.FC<PropsWithChildren<ClerkProviderProps>> = ({
   ...others
 }) => {
 
-  return (
-    <ClerkClerkProvider
-      publishableKey={PUBLISHABLE_KEY}
-      afterSignOutUrl={afterSignOutUrl}
-      appearance={{ baseTheme: themes[themeName] || undefined }}
-      {...others}
-    >
-      {children}
-    </ClerkClerkProvider>
-  );
+  const appearance = React.useMemo(() => {
+      const theme = themeName ? themes[themeName as keyof typeof themes] : undefined;
+      return theme ? { baseTheme: theme } : undefined;
+    }, [themeName]);
+
+    return (
+      <ClerkClerkProvider
+        publishableKey={PUBLISHABLE_KEY}
+        afterSignOutUrl={afterSignOutUrl}
+        appearance={appearance}
+        {...others}
+      >
+        {children}
+      </ClerkClerkProvider>
+    );
 };
 
 export default ClerkProvider
