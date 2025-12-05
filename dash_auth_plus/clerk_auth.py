@@ -379,7 +379,7 @@ class ClerkAuth(Auth):
                 if not self.initialized:
                     return index_string
 
-                if clerk_script and "</head>" in index_string:
+                if self.clerk_script and "</head>" in index_string:
                     # Inject scripts and styles before closing head tag
                     index_string = index_string.replace(
                         "</head>",
