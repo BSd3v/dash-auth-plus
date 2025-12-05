@@ -51,7 +51,7 @@ jobs:
     needs: build
     permissions:
       contents: read
-    uses: BSd3v/dash-auth-plus/.github/workflows/test-runner.yml
+    uses: ./.github/workflows/test-runner.yml
     with:
       python-version: ${{ inputs.python-version }}
       test-distribution: true
