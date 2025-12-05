@@ -1,13 +1,13 @@
 from selenium.webdriver.common.keys import Keys
 from dash import Dash, html, dcc, page_container
-from dash_auth_plus import ClerkAuth, DashAuthComponents
+from dash_auth_plus import ClerkAuth
 import os
 import pytest
 
 
 def spinup_app():
     from dash import Dash, html, dcc, page_container
-
+    from dash_auth_plus import DashAuthComponents
     app = Dash(
         __name__, use_pages=True, pages_folder="", suppress_callback_exceptions=True
     )
