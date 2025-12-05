@@ -1,6 +1,6 @@
 import React, { PropsWithChildren } from "react";
 import { ClerkProvider as ClerkClerkProvider } from '@clerk/clerk-react'
-import {dark, neobrutalism } from '@clerk/themes'
+import { dark, neobrutalism } from '@clerk/themes'
 
 const themes = {
   'dark': dark,
