@@ -2,9 +2,10 @@ import React, { PropsWithChildren } from "react";
 import { ClerkProvider as ClerkClerkProvider } from '@clerk/clerk-react'
 import {dark, neobrutalism } from '@clerk/themes'
 
-const themes = Object.fromEntries(
-  [dark, neobrutalism].map(theme => [theme.name, theme])
-);
+const themes = {
+  'dark': dark,
+  'neobrutalism': neobrutalism
+};
 
 export interface ClerkProviderProps {
     PUBLISHABLE_KEY: string;
