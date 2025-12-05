@@ -1,6 +1,6 @@
 {
   "name": "dash_auth_plus",
-  "version": "0.0.1a5",
+  "version": "0.0.1a4",
   "scripts": {
     "private::format.black": "black dash_auth_plus --exclude metadata_test.py",
     "format": "run-s private::format.*",
