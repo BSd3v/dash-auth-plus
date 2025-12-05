@@ -30,16 +30,16 @@ const ClerkProvider: React.FC<PropsWithChildren<ClerkProviderProps>> = ({
       return theme ? { baseTheme: theme } : undefined;
     }, [themeName]);
 
-    return (
-      <ClerkClerkProvider
-        publishableKey={PUBLISHABLE_KEY}
-        afterSignOutUrl={afterSignOutUrl}
-        appearance={appearance}
-        {...others}
-      >
-        {children}
-      </ClerkClerkProvider>
-    );
+  return (
+    <ClerkClerkProvider
+      publishableKey={PUBLISHABLE_KEY}
+      afterSignOutUrl={afterSignOutUrl}
+      appearance={appearance}
+      {...others}
+    >
+      {children}
+    </ClerkClerkProvider>
+  );
 };
 
 export default ClerkProvider
