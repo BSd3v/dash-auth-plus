@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [0.0.1a4] - 2025-12-05
+### Added
+- Added support for Clerk Provider themes, as well as ids for support with callbacks
+
+## Fixed
+- Fixed issue with DashAuth components not being available
+
 ## [0.0.1a3] - 2025-11-25
 ## Fixed
 - Fixed issue with Clerk components missing and also adding necessary session data to callback for login.
