@@ -28,7 +28,7 @@ const ClerkProvider: React.FC<PropsWithChildren<ClerkProviderProps & { themeName
     <ClerkClerkProvider
       publishableKey={PUBLISHABLE_KEY}
       afterSignOutUrl={afterSignOutUrl}
-      appearance={{ baseTheme: themes[themeName] }}
+      appearance={{ baseTheme: themes[themeName] || undefined }}
       {...others}
     >
       {children}
