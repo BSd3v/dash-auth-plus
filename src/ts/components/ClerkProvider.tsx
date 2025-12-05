@@ -16,7 +16,7 @@ export interface ClerkProviderProps {
 }
 
 
-const ClerkProvider: React.FC<PropsWithChildren<ClerkProviderProps & { themeName?: string }>> = ({
+const ClerkProvider: React.FC<PropsWithChildren<ClerkProviderProps>> = ({
   PUBLISHABLE_KEY,
   afterSignOutUrl,
   children,
