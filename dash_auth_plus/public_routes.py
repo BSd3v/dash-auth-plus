@@ -69,7 +69,6 @@ def public_callback(*callback_args, **callback_kwargs):
     """
 
     def decorator(func):
-
         wrapped_func = callback(*callback_args, **callback_kwargs)(func)
         try:
             callback_id = next(

@@ -185,7 +185,7 @@ class ClerkAuth(Auth):
         self.login_route = "/login"
         self.logout_route = "/logout"
         self.authenticate_request_options = AuthenticateRequestOptions
-        self.app.server.after_request(self.set_loggedin_if_user_session)
+        self.auth_protect_layouts_kwargs = auth_protect_layouts_kwargs or {}
         host = app.server.config.get("SERVER_NAME") or "127.0.0.1"
         port = app.server.config.get("SERVER_PORT", 8050)
         self.allowed_parties = (
@@ -275,8 +275,9 @@ class ClerkAuth(Auth):
             """
                         <script>
                             """
-            + f"if (window.location.pathname == '{self.logout_route}') "
-            + """{
+            + f"const logout_path = '{self.logout_route}';"
+            + """
+            if (logout_path === window.location.pathname) {
                                 localStorage.setItem('clerk_logged_in', false)
                             }
                             // Helper to ensure Clerk is ready
@@ -291,6 +292,16 @@ class ClerkAuth(Auth):
                                             // CRITICAL: Always call load() to ensure Clerk initializes properly
                                             window.Clerk.load().then(() => {
                                                 // Set up session sync listener
+                                                if (window.location.pathname == logout_path) {
+                                                    Clerk.signOut().then(() => {
+                                                        localStorage.setItem('clerk_logged_in', false);
+                                                        console.log('User signed out via logout route');
+                                                        return;
+                                                    }).catch(err => {
+                                                        console.error('Error signing out:', err);
+                                                        return;
+                                                    });
+                                                };
                                                 if (window.Clerk.addListener) {
                                                     window.Clerk.addListener((resources) => {
                                                         var clerk_logged_in = JSON.parse(localStorage.getItem('clerk_logged_in')) || false;
@@ -417,16 +428,15 @@ class ClerkAuth(Auth):
 
     def login_request(self):
         """Start the login process."""
+        resp = self._create_redirect_uri()
         if request.method == "POST":
             return jsonify(
                 {
                     "multi": True,
-                    "sideUpdate": {
-                        "_clerk_login_url": {"href": self._create_redirect_uri()}
-                    },
+                    "sideUpdate": {"_clerk_login_url": {"href": resp}},
                 }
             )
-        return redirect(self._create_redirect_uri())
+        return flask.redirect(resp)
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
@@ -539,26 +549,6 @@ class ClerkAuth(Auth):
         ):
             return True
         return False
-
-    def set_loggedin_if_user_session(self, response: Response):
-        """Set the response data to indicate if the user is logged in."""
-        try:
-            if session.get("user") and request.path == "/_dash-update-component":
-                response_data = response.get_json()
-                sideUpdate = response_data.get("sideUpdate", {})
-                response_data["sideUpdate"] = {
-                    **sideUpdate,
-                    "clerk_logged_in": {"data": True},
-                }
-                return flask.make_response(response_data)
-        except Exception:
-            logging.error(
-                "Error setting logged in state: %s\n%s",
-                traceback.format_exc(),
-                exc_info=True,
-            )
-            pass
-        return response
 
     def get_user_data(self):
         request_state = self.clerk_client.authenticate_request(
