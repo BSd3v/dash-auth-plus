@@ -7,7 +7,7 @@ import dash
 from dash.exceptions import PreventUpdate
 from flask import session, has_request_context
 from dash import html
-
+from inspect import iscoroutinefunction
 
 OutputVal = Union[Callable[[], Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
@@ -166,31 +166,67 @@ def protected(
         missing_permissions_output = unauthenticated_output
 
     def decorator(output: OutputVal):
-        def wrap(*args, **kwargs):
-            def process_output(output, *args, **kwargs):
-                if isinstance(output, Callable):
-                    return output(*args, **kwargs)
-                return output
+        if iscoroutinefunction(output):
 
-            authorized = check_groups(
-                groups=groups,
-                groups_key=groups_key,
-                groups_str_split=groups_str_split,
-                check_type=check_type,
-                group_lookup=group_lookup,
-                restricted_users=restricted_users,
-                restricted_users_lookup=restricted_users_lookup,
-                user_session_key=user_session_key,
-            )
-            if authorized is None:
-                return process_output(unauthenticated_output)
-            if authorized:
-                return process_output(output, *args, **kwargs)
-            return process_output(missing_permissions_output)
+            async def async_wrap(*args, **kwargs):
+                def process_output(output, *args, **kwargs):
+                    if isinstance(output, Callable):
+                        return output(*args, **kwargs)
+                    return output
 
-        if isinstance(output, Callable):
-            return wrap
-        return wrap()
+                authorized = check_groups(
+                    groups=groups,
+                    groups_key=groups_key,
+                    groups_str_split=groups_str_split,
+                    check_type=check_type,
+                    group_lookup=group_lookup,
+                    restricted_users=restricted_users,
+                    restricted_users_lookup=restricted_users_lookup,
+                    user_session_key=user_session_key,
+                )
+                if authorized is None:
+                    result = process_output(unauthenticated_output)
+                    return (
+                        await result
+                        if iscoroutinefunction(unauthenticated_output)
+                        else result
+                    )
+                if authorized:
+                    result = output(*args, **kwargs)
+                    return await result
+                result = process_output(missing_permissions_output)
+                return (
+                    await result
+                    if iscoroutinefunction(missing_permissions_output)
+                    else result
+                )
+
+            return async_wrap
+        else:
+
+            def wrap(*args, **kwargs):
+                def process_output(output, *args, **kwargs):
+                    if isinstance(output, Callable):
+                        return output(*args, **kwargs)
+                    return output
+
+                authorized = check_groups(
+                    groups=groups,
+                    groups_key=groups_key,
+                    groups_str_split=groups_str_split,
+                    check_type=check_type,
+                    group_lookup=group_lookup,
+                    restricted_users=restricted_users,
+                    restricted_users_lookup=restricted_users_lookup,
+                    user_session_key=user_session_key,
+                )
+                if authorized is None:
+                    return process_output(unauthenticated_output)
+                if authorized:
+                    return process_output(output, *args, **kwargs)
+                return process_output(missing_permissions_output)
+
+            return wrap if isinstance(output, Callable) else wrap()
 
     return decorator
 
