@@ -8,6 +8,7 @@ import pytest
 def spinup_app():
     from dash import Dash, html, dcc, page_container
     from dash_auth_plus import DashAuthComponents
+
     app = Dash(
         __name__, use_pages=True, pages_folder="", suppress_callback_exceptions=True
     )
@@ -22,8 +23,7 @@ def spinup_app():
     app.layout = html.Div(
         [
             DashAuthComponents.ClerkProvider(
-                [],
-                publishableKey=os.getenv("CLERK_PUBLISHABLE_KEY")
+                [], publishableKey=os.getenv("CLERK_PUBLISHABLE_KEY")
             ),
             html.Div(
                 [

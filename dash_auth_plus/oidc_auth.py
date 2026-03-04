@@ -131,8 +131,7 @@ class OIDCAuth(Auth):
             app.server.secret_key = secret_key
 
         if app.server.secret_key is None:
-            raise RuntimeError(
-                """
+            raise RuntimeError("""
                 app.server.secret_key is missing.
                 Generate a secret key in your Python session
                 with the following commands:
@@ -145,8 +144,7 @@ class OIDCAuth(Auth):
                 Note that you should not do this dynamically:
                 you should create a key and then assign the value of
                 that key in your code/via a secret.
-                """
-            )
+                """)
 
         if secure_session:
             app.server.config["SESSION_COOKIE_SECURE"] = True
@@ -260,16 +258,13 @@ class OIDCAuth(Auth):
         """Logout the user."""
         session.clear()
         base_url = self.app.config.get("url_base_pathname") or "/"
-        page = (
-            self.logout_page
-            or f"""
+        page = self.logout_page or f"""
         <div style="display: flex; flex-direction: column;
         gap: 0.75rem; padding: 3rem 5rem;">
             <div>Logged out successfully</div>
             <div><a href="{base_url}">Go back</a></div>
         </div>
         """
-        )
         return page
 
     def callback(self, idp: str):  # pylint: disable=C0116

@@ -6,7 +6,6 @@ from dash._callback import GLOBAL_CALLBACK_MAP
 from dash import get_app
 from werkzeug.routing import Map, MapAdapter, Rule
 
-
 DASH_PUBLIC_ASSETS_EXTENSIONS = "js,css"
 BASE_PUBLIC_ROUTES = [
     f"/assets/<path:path>.{ext}"

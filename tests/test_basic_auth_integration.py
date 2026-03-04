@@ -3,7 +3,6 @@ import requests
 
 from dash_auth_plus import BasicAuth, add_public_routes, protected
 
-
 TEST_USERS = {
     "valid": [["hello", "world"], ["hello2", "wo:rld"]],
     "invalid": [["hello", "password"]],
