@@ -1,3 +1,5 @@
+import asyncio
+
 from dash_auth_plus import list_groups, check_groups, protected
 from flask import Flask, session
 
@@ -62,3 +64,38 @@ def test_gp003_protected():
 
         del session["user"]
         assert f1() == "unauthenticated"
+
+
+def test_gp004_protected_async():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    async def async_func():
+        return "success"
+
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+            "tenant": "ABC",
+        }
+
+        # Authorized: user is in the required group → async callback is awaited
+        f_authorized = protected(
+            unauthenticated_output="unauthenticated",
+            missing_permissions_output="forbidden",
+            groups=["default"],
+        )(async_func)
+        assert asyncio.run(f_authorized()) == "success"
+
+        # Unauthorized: user is not in the required group → static forbidden output
+        f_forbidden = protected(
+            unauthenticated_output="unauthenticated",
+            missing_permissions_output="forbidden",
+            groups=["admin"],
+        )(async_func)
+        assert asyncio.run(f_forbidden()) == "forbidden"
+
+        # Unauthenticated: no session user → static unauthenticated output
+        del session["user"]
+        assert asyncio.run(f_forbidden()) == "unauthenticated"
