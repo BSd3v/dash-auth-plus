@@ -88,6 +88,7 @@ class ClerkAuth(Auth):
         auth_protect_layouts: Optional[bool] = False,
         auth_protect_layouts_kwargs: Optional[dict] = None,
         page_container: Optional[str] = None,
+        default_html_style: Optional[str] = None,
     ):
         """Secure a Dash app through OpenID Connect.
 
@@ -175,6 +176,11 @@ class ClerkAuth(Auth):
             self.force_https_callback = False
 
         self.initialized = False
+        self.default_html_style = (
+            "<style>\n" + default_html_style + "\n</style>"
+            if default_html_style
+            else ""
+        )
         self.clerk_secret_key = clerk_secret_key
         self.clerk_domain = clerk_domain
         self.clerk_publishable_key = clerk_publishable_key
@@ -305,7 +311,6 @@ class ClerkAuth(Auth):
                                                         var clerk_logged_in = JSON.parse(localStorage.getItem('clerk_logged_in')) || false;
                                                         // Store auth state in localStorage for persistence
                                                         if (resources.user && resources.session) {
-                                                            window?.dash_clientside?.set_props('clerk_user_update', {data: new Date().toISOString()});
                                                             if (!clerk_logged_in) {
                                                                 console.log('logging in Clerk user');
                                                                 setTimeout(() => {
@@ -368,7 +373,7 @@ class ClerkAuth(Auth):
                         """
         )
 
-        self.clerk_script = f"{clerk_script}\n{init_script}\n"
+        self.clerk_script = f"{clerk_script}\n{init_script}\n{self.default_html_style}"
 
         if dash.__version__ >= "3.0":
             # Use the new OAuth2App class for Dash 3+
@@ -509,7 +514,7 @@ class ClerkAuth(Auth):
 
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
-        if request.args.get("redirect_url"):
+        if request.args.get("redirect_url") and not session.get("url"):
             # If redirect_uri is provided, use it
             session["url"] = unquote(request.args.get("redirect_url"))
 
@@ -525,7 +530,10 @@ class ClerkAuth(Auth):
             sess = self.clerk_client.sessions.get(session_id=sid)
             user_data = self.clerk_client.users.get(user_id=sess.user_id)
             return self.after_logged_in(user_data, sid)
-        return f"""<div>logging in...</div>{self.clerk_script}"""
+        return f"""
+        <div>logging in...</div>
+        {self.clerk_script}
+        """
 
     def is_authorized(self):  # pylint: disable=C0116
         """Check whether the user is authenticated."""

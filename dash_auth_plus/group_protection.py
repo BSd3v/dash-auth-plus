@@ -41,6 +41,7 @@ def list_groups(
 def check_groups(
     groups: Optional[Union[Callable, List[str]]] = None,
     *,
+    path: Optional[str] = None,
     groups_key: str = "groups",
     groups_str_split: str = None,
     check_type: CheckType = "one_of",
@@ -98,7 +99,7 @@ def check_groups(
             # User is restricted
             return False
     if callable(groups):
-        groups = groups(**(group_lookup or {}))
+        groups = groups(path=path, **(group_lookup or {}))
     if groups is None:
         return True
 
@@ -183,6 +184,7 @@ def protected(
                     restricted_users=restricted_users,
                     restricted_users_lookup=restricted_users_lookup,
                     user_session_key=user_session_key,
+                    path=(_kwargs.get("path_template") or _kwargs.get("path")),
                 )
                 if authorized is None:
                     result = process_output(unauthenticated_output)
@@ -219,6 +221,7 @@ def protected(
                     restricted_users=restricted_users,
                     restricted_users_lookup=restricted_users_lookup,
                     user_session_key=user_session_key,
+                    path=(_kwargs.get("path_template") or _kwargs.get("path")),
                 )
                 if authorized is None:
                     return process_output(unauthenticated_output)

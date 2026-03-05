@@ -91,7 +91,7 @@ class Auth(ABC):
                     page_container_test = next(
                         (
                             out
-                            for out in body["outputs"]
+                            for out in body.get("outputs", [])
                             if isinstance(out, dict)
                             and out.get("id") == self.page_container
                             and out.get("property") == "children"
@@ -119,6 +119,11 @@ class Auth(ABC):
             # If the route is not a callback route, check whether the path
             # matches a public route, or whether the request is authorised
             if public_routes.test(request.path) or self.is_authorized():
+                return None
+
+            if self.auth_protect_layouts:
+                # If auth_protect_layouts is enabled, the user may be unauthenticated but still allowed to access the route,
+                # in which case we don't want to trigger the login flow and instead just allow access to the route
                 return None
 
             # Otherwise, ask the user to log in
