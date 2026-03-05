@@ -297,7 +297,7 @@ class ClerkAuth(Auth):
                                             window.Clerk.load().then(() => {
                                                 // Set up session sync listener
                                                 if (window.location.pathname == logout_path) {
-                                                    Clerk.signOut().then(() => {
+                                                    window.Clerk.signOut().then(() => {
                                                         localStorage.setItem('clerk_logged_in', false);
                                                         console.log('User signed out via logout route');
                                                         return;
