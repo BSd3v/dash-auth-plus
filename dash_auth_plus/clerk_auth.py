@@ -176,11 +176,7 @@ class ClerkAuth(Auth):
             self.force_https_callback = False
 
         self.initialized = False
-        self.default_html_style = (
-            "<style>\n" + default_html_style + "\n</style>"
-            if default_html_style
-            else ""
-        )
+        self.default_html_style = '<style>\n' + default_html_style + "\n</style>" if default_html_style else ''
         self.clerk_secret_key = clerk_secret_key
         self.clerk_domain = clerk_domain
         self.clerk_publishable_key = clerk_publishable_key
@@ -229,7 +225,8 @@ class ClerkAuth(Auth):
             app.server.secret_key = secret_key
 
         if app.server.secret_key is None:
-            raise RuntimeError("""
+            raise RuntimeError(
+                """
                 app.server.secret_key is missing.
                 Generate a secret key in your Python session
                 with the following commands:
@@ -242,7 +239,8 @@ class ClerkAuth(Auth):
                 Note that you should not do this dynamically:
                 you should create a key and then assign the value of
                 that key in your code/via a secret.
-                """)
+                """
+            )
 
         if secure_session:
             app.server.config["SESSION_COOKIE_SECURE"] = True
@@ -436,7 +434,9 @@ class ClerkAuth(Auth):
             return jsonify(
                 {
                     "multi": True,
-                    "sideUpdate": {"_clerk_login_url": {"href": resp}},
+                    "sideUpdate": {
+                        "_clerk_login_url": {"href": resp}
+                    },
                 }
             )
         return flask.redirect(resp)
@@ -454,7 +454,8 @@ class ClerkAuth(Auth):
                 )
         session.clear()
         response = Response(
-            self.logout_page or f"""
+            self.logout_page
+            or f"""
         <div style="display: flex; flex-direction: column;
         gap: 0.75rem; padding: 3rem 5rem;">
             <div>Logged out successfully</div>
@@ -514,7 +515,7 @@ class ClerkAuth(Auth):
 
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
-        if request.args.get("redirect_url") and not session.get("url"):
+        if request.args.get("redirect_url") and not session.get('url'):
             # If redirect_uri is provided, use it
             session["url"] = unquote(request.args.get("redirect_url"))
 
@@ -567,5 +568,5 @@ class ClerkAuth(Auth):
             sid = request_state.payload.get("sid")
             sess = self.clerk_client.sessions.get(session_id=sid)
             user_data = self.clerk_client.users.get(user_id=sess.user_id)
-            return user_data.__dict__
+            return {**user_data.__dict__, "session_id": sid}
         return False  # "user not authenticated"
