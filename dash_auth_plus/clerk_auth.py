@@ -89,6 +89,7 @@ class ClerkAuth(Auth):
         auth_protect_layouts_kwargs: Optional[dict] = None,
         page_container: Optional[str] = None,
         default_html_style: Optional[str] = None,
+        before_logout: Optional[Callable] = None,
     ):
         """Secure a Dash app through OpenID Connect.
 
@@ -145,6 +146,11 @@ class ClerkAuth(Auth):
         :param page_container: string, id of the page container in the app.
             If not provided, this will set the page_container_test to True,
             meaning all pathname callbacks will be judged.
+        default_html_style: str, optional
+            Custom CSS styles to inject into the HTML head, by default None.
+        before_logout: Callable, optional
+            A function to call before logging out the user, by default None.
+             This can be used to perform cleanup actions or logging before the user is logged out.
 
         Raises
         ------
@@ -192,6 +198,7 @@ class ClerkAuth(Auth):
         self.logout_route = "/logout"
         self.authenticate_request_options = AuthenticateRequestOptions
         self.auth_protect_layouts_kwargs = auth_protect_layouts_kwargs or {}
+        self.before_logout = before_logout or (lambda: None)
         host = app.server.config.get("SERVER_NAME") or "127.0.0.1"
         port = app.server.config.get("SERVER_PORT", 8050)
         self.allowed_parties = (
@@ -443,6 +450,7 @@ class ClerkAuth(Auth):
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
+        self.before_logout()
         if "user" in session:
             try:
                 self.clerk_client.sessions.revoke(
