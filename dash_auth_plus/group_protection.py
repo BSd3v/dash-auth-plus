@@ -174,7 +174,8 @@ def protected(
                     if isinstance(output, Callable):
                         return output(*args, path=path, **kwargs)
                     return output
-                path=_kwargs.get("path_template") or _kwargs.get("path")
+
+                path = _kwargs.get("path_template") or _kwargs.get("path")
                 authorized = check_groups(
                     groups=groups,
                     groups_key=groups_key,
@@ -211,7 +212,8 @@ def protected(
                     if isinstance(output, Callable):
                         return output(*args, **kwargs)
                     return output
-                path=(_kwargs.get("path_template") or _kwargs.get("path"))
+
+                path = _kwargs.get("path_template") or _kwargs.get("path")
                 authorized = check_groups(
                     groups=groups,
                     groups_key=groups_key,
@@ -221,7 +223,7 @@ def protected(
                     restricted_users=restricted_users,
                     restricted_users_lookup=restricted_users_lookup,
                     user_session_key=user_session_key,
-                    path=path
+                    path=path,
                 )
                 if authorized is None:
                     return process_output(unauthenticated_output, path=path)
