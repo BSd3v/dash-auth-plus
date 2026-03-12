@@ -170,11 +170,11 @@ def protected(
         if iscoroutinefunction(output):
 
             async def async_wrap(*args, **kwargs):
-                def process_output(output, *args, **kwargs):
+                def process_output(output, *args, path=path, **kwargs):
                     if isinstance(output, Callable):
-                        return output(*args, **kwargs)
+                        return output(*args, path=path, **kwargs)
                     return output
-
+                path=_kwargs.get("path_template") or _kwargs.get("path")
                 authorized = check_groups(
                     groups=groups,
                     groups_key=groups_key,
@@ -184,10 +184,10 @@ def protected(
                     restricted_users=restricted_users,
                     restricted_users_lookup=restricted_users_lookup,
                     user_session_key=user_session_key,
-                    path=(_kwargs.get("path_template") or _kwargs.get("path")),
+                    path=path,
                 )
                 if authorized is None:
-                    result = process_output(unauthenticated_output)
+                    result = process_output(unauthenticated_output, path=path)
                     return (
                         await result
                         if iscoroutinefunction(unauthenticated_output)
@@ -196,7 +196,7 @@ def protected(
                 if authorized:
                     result = output(*args, **kwargs)
                     return await result
-                result = process_output(missing_permissions_output)
+                result = process_output(missing_permissions_output, path=path)
                 return (
                     await result
                     if iscoroutinefunction(missing_permissions_output)
@@ -207,11 +207,11 @@ def protected(
         else:
 
             def wrap(*args, **kwargs):
-                def process_output(output, *args, **kwargs):
+                def process_output(output, *args, path=None, **kwargs):
                     if isinstance(output, Callable):
                         return output(*args, **kwargs)
                     return output
-
+                path=(_kwargs.get("path_template") or _kwargs.get("path"))
                 authorized = check_groups(
                     groups=groups,
                     groups_key=groups_key,
@@ -221,13 +221,13 @@ def protected(
                     restricted_users=restricted_users,
                     restricted_users_lookup=restricted_users_lookup,
                     user_session_key=user_session_key,
-                    path=(_kwargs.get("path_template") or _kwargs.get("path")),
+                    path=path
                 )
                 if authorized is None:
-                    return process_output(unauthenticated_output)
+                    return process_output(unauthenticated_output, path=path)
                 if authorized:
                     return process_output(output, *args, **kwargs)
-                return process_output(missing_permissions_output)
+                return process_output(missing_permissions_output, path=path)
 
             return wrap if isinstance(output, Callable) else wrap()
 
