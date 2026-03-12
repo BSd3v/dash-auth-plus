@@ -9,7 +9,7 @@ from flask import session, has_request_context
 from dash import html
 from inspect import Parameter, iscoroutinefunction, isawaitable, signature
 
-OutputVal = Union[Callable[[], Any], Any]
+OutputVal = Union[Callable[..., Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
 
 
