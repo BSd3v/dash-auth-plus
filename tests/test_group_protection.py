@@ -99,3 +99,45 @@ def test_gp004_protected_async():
         # Unauthenticated: no session user → static unauthenticated output
         del session["user"]
         assert asyncio.run(f_forbidden()) == "unauthenticated"
+
+
+def test_gp005_callable_groups_without_path():
+    """Callable groups that don't accept 'path' must not receive it (backwards compat)."""
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        def groups_no_path():
+            return ["default"]
+
+        # This would raise TypeError before the fix if path was unconditionally passed
+        assert check_groups(groups_no_path, path="/some/path") is True
+
+        def groups_only_kwargs(**kwargs):
+            return ["default"]
+
+        assert check_groups(groups_only_kwargs, path="/some/path") is True
+
+
+def test_gp006_callable_groups_with_path():
+    """Callable groups that accept 'path' should receive it."""
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["admin"],
+        }
+
+        received_path = {}
+
+        def groups_with_path(path=None):
+            received_path["path"] = path
+            return ["admin"]
+
+        assert check_groups(groups_with_path, path="/dashboard") is True
+        assert received_path["path"] == "/dashboard"

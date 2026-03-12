@@ -7,7 +7,7 @@ import dash
 from dash.exceptions import PreventUpdate
 from flask import session, has_request_context
 from dash import html
-from inspect import iscoroutinefunction
+from inspect import iscoroutinefunction, signature, Parameter
 
 OutputVal = Union[Callable[[], Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
@@ -99,7 +99,14 @@ def check_groups(
             # User is restricted
             return False
     if callable(groups):
-        groups = groups(path=path, **(group_lookup or {}))
+        params = signature(groups).parameters
+        accepts_path = "path" in params or any(
+            p.kind == Parameter.VAR_KEYWORD for p in params.values()
+        )
+        if accepts_path:
+            groups = groups(path=path, **(group_lookup or {}))
+        else:
+            groups = groups(**(group_lookup or {}))
     if groups is None:
         return True
 
