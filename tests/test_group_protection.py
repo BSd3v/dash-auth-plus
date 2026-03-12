@@ -99,3 +99,73 @@ def test_gp004_protected_async():
         # Unauthenticated: no session user → static unauthenticated output
         del session["user"]
         assert asyncio.run(f_forbidden()) == "unauthenticated"
+
+
+def test_gp005_protected_async_callable_outputs():
+    """Async protected functions with no-arg callable outputs (sync and async)."""
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    async def async_func():
+        return "success"
+
+    def sync_unauth():
+        return "unauthenticated_callable"
+
+    def sync_forbidden():
+        return "forbidden_callable"
+
+    async def async_unauth():
+        return "unauthenticated_async_callable"
+
+    async def async_forbidden():
+        return "forbidden_async_callable"
+
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+            "tenant": "ABC",
+        }
+
+        # --- sync no-arg callables ---
+        f_authorized = protected(
+            unauthenticated_output=sync_unauth,
+            missing_permissions_output=sync_forbidden,
+            groups=["default"],
+        )(async_func)
+        assert asyncio.run(f_authorized()) == "success"
+
+        f_forbidden = protected(
+            unauthenticated_output=sync_unauth,
+            missing_permissions_output=sync_forbidden,
+            groups=["admin"],
+        )(async_func)
+        assert asyncio.run(f_forbidden()) == "forbidden_callable"
+
+        del session["user"]
+        assert asyncio.run(f_forbidden()) == "unauthenticated_callable"
+
+        # --- async no-arg callables ---
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+            "tenant": "ABC",
+        }
+
+        f_authorized_async = protected(
+            unauthenticated_output=async_unauth,
+            missing_permissions_output=async_forbidden,
+            groups=["default"],
+        )(async_func)
+        assert asyncio.run(f_authorized_async()) == "success"
+
+        f_forbidden_async = protected(
+            unauthenticated_output=async_unauth,
+            missing_permissions_output=async_forbidden,
+            groups=["admin"],
+        )(async_func)
+        assert asyncio.run(f_forbidden_async()) == "forbidden_async_callable"
+
+        del session["user"]
+        assert asyncio.run(f_forbidden_async()) == "unauthenticated_async_callable"

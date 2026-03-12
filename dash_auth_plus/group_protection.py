@@ -172,7 +172,7 @@ def protected(
             async def async_wrap(*args, **kwargs):
                 def process_output(output, *args, path=None, **kwargs):
                     if isinstance(output, Callable):
-                        return output(*args, path=path, **kwargs)
+                        return output(*args, **kwargs)
                     return output
 
                 path = _kwargs.get("path_template") or _kwargs.get("path")
