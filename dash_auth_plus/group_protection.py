@@ -170,7 +170,7 @@ def protected(
         if iscoroutinefunction(output):
 
             async def async_wrap(*args, **kwargs):
-                def process_output(output, *args, path=path, **kwargs):
+                def process_output(output, *args, path=None, **kwargs):
                     if isinstance(output, Callable):
                         return output(*args, path=path, **kwargs)
                     return output
