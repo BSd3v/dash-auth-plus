@@ -169,3 +169,74 @@ def test_gp005_protected_async_callable_outputs():
 
         del session["user"]
         assert asyncio.run(f_forbidden_async()) == "unauthenticated_async_callable"
+
+
+def test_gp006_protected_callable_outputs_with_path():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    def func():
+        return "success"
+
+    async def async_func():
+        return "success"
+
+    def sync_unauth(path):
+        return f"unauth:{path}"
+
+    def sync_forbidden(path):
+        return f"forbidden:{path}"
+
+    async def async_unauth(path):
+        return f"unauth_async:{path}"
+
+    async def async_forbidden(path):
+        return f"forbidden_async:{path}"
+
+    def sync_unauth_no_args():
+        return "unauth_no_args"
+
+    with app.test_request_context("/", method="GET"):
+        # Sync protected output callables can receive path for triage
+        f_sync = protected(
+            unauthenticated_output=sync_unauth,
+            missing_permissions_output=sync_forbidden,
+            groups=["admin"],
+            path="/triage-sync",
+        )(func)
+
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+            "tenant": "ABC",
+        }
+        assert f_sync() == "forbidden:/triage-sync"
+
+        del session["user"]
+        assert f_sync() == "unauth:/triage-sync"
+
+        # Async protected output callables can receive path for triage
+        f_async = protected(
+            unauthenticated_output=async_unauth,
+            missing_permissions_output=async_forbidden,
+            groups=["admin"],
+            path="/triage-async",
+        )(async_func)
+
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+            "tenant": "ABC",
+        }
+        assert asyncio.run(f_async()) == "forbidden_async:/triage-async"
+
+        del session["user"]
+        assert asyncio.run(f_async()) == "unauth_async:/triage-async"
+
+        # Backward compatibility: no-arg callables still work even when path is set
+        f_no_arg = protected(
+            unauthenticated_output=sync_unauth_no_args,
+            groups=["admin"],
+            path="/triage-unused",
+        )(func)
+        assert f_no_arg() == "unauth_no_args"

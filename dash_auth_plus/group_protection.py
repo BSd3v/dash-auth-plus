@@ -7,7 +7,7 @@ import dash
 from dash.exceptions import PreventUpdate
 from flask import session, has_request_context
 from dash import html
-from inspect import iscoroutinefunction
+from inspect import Parameter, iscoroutinefunction, signature
 
 OutputVal = Union[Callable[[], Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
@@ -166,15 +166,31 @@ def protected(
     if missing_permissions_output is None:
         missing_permissions_output = unauthenticated_output
 
+    def process_output(output, *args, path=None, **kwargs):
+        if not callable(output):
+            return output
+
+        if path is None:
+            return output(*args, **kwargs)
+
+        try:
+            parameters = signature(output).parameters.values()
+            accepts_path = any(
+                param.name == "path" or param.kind == Parameter.VAR_KEYWORD
+                for param in parameters
+            )
+        except (TypeError, ValueError):
+            accepts_path = False
+
+        if accepts_path:
+            return output(*args, path=path, **kwargs)
+
+        return output(*args, **kwargs)
+
     def decorator(output: OutputVal):
         if iscoroutinefunction(output):
 
             async def async_wrap(*args, **kwargs):
-                def process_output(output, *args, path=None, **kwargs):
-                    if isinstance(output, Callable):
-                        return output(*args, **kwargs)
-                    return output
-
                 path = _kwargs.get("path_template") or _kwargs.get("path")
                 authorized = check_groups(
                     groups=groups,
@@ -208,11 +224,6 @@ def protected(
         else:
 
             def wrap(*args, **kwargs):
-                def process_output(output, *args, path=None, **kwargs):
-                    if isinstance(output, Callable):
-                        return output(*args, **kwargs)
-                    return output
-
                 path = _kwargs.get("path_template") or _kwargs.get("path")
                 authorized = check_groups(
                     groups=groups,
