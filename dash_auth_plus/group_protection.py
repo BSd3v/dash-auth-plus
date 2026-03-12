@@ -235,7 +235,7 @@ def protected(
                     return _process_output(output, *args, **kwargs)
                 return _process_output(missing_permissions_output, path=path)
 
-            return wrap if isinstance(output, Callable) else wrap()
+            return wrap if callable(output) else wrap()
 
     return decorator
 
