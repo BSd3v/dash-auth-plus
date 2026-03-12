@@ -160,3 +160,59 @@ def test_gp006_protected_async_async_callable_outputs():
         # Unauthenticated path with async callable output
         del session["user"]
         assert asyncio.run(f_forbidden()) == "unauthenticated"
+
+
+def test_gp007_protected_async_callable_outputs_with_path():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    async def async_func():
+        return "success"
+
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        f_forbidden = protected(
+            unauthenticated_output=lambda path: f"unauthenticated:{path}",
+            missing_permissions_output=lambda path: f"forbidden:{path}",
+            groups=["admin"],
+            path="/triage-path",
+        )(async_func)
+        assert asyncio.run(f_forbidden()) == "forbidden:/triage-path"
+
+        del session["user"]
+        assert asyncio.run(f_forbidden()) == "unauthenticated:/triage-path"
+
+
+def test_gp008_protected_async_callable_outputs_with_path_kwargs():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    async def async_func():
+        return "success"
+
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        def missing_permissions_output(**kwargs):
+            return f"forbidden:{kwargs['path']}"
+
+        def unauthenticated_output(**kwargs):
+            return f"unauthenticated:{kwargs['path']}"
+
+        f_forbidden = protected(
+            unauthenticated_output=unauthenticated_output,
+            missing_permissions_output=missing_permissions_output,
+            groups=["admin"],
+            path="/triage-kwargs",
+        )(async_func)
+        assert asyncio.run(f_forbidden()) == "forbidden:/triage-kwargs"
+
+        del session["user"]
+        assert asyncio.run(f_forbidden()) == "unauthenticated:/triage-kwargs"

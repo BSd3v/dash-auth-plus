@@ -7,10 +7,30 @@ import dash
 from dash.exceptions import PreventUpdate
 from flask import session, has_request_context
 from dash import html
-from inspect import iscoroutinefunction, isawaitable
+from inspect import Parameter, iscoroutinefunction, isawaitable, signature
 
 OutputVal = Union[Callable[[], Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
+
+
+def _process_output(output, *args, path=None, **kwargs):
+    if not callable(output):
+        return output
+    if path is None:
+        return output(*args, **kwargs)
+
+    try:
+        output_signature = signature(output)
+    except (TypeError, ValueError):
+        return output(*args, **kwargs)
+
+    supports_kwargs = any(
+        param.kind == Parameter.VAR_KEYWORD
+        for param in output_signature.parameters.values()
+    )
+    if "path" in output_signature.parameters or supports_kwargs:
+        return output(*args, path=path, **kwargs)
+    return output(*args, **kwargs)
 
 
 def list_groups(
@@ -131,11 +151,13 @@ def protected(
     of authentication and permissions.
 
     :param unauthenticated_output: Output when the user is not authenticated.
-        Note: needs to be a function with no argument or static outputs.
+        Note: can be static output, a function with no argument, or a function
+        accepting a ``path`` keyword argument.
     :param missing_permissions_output: Output when the user is authenticated
         but does not have the right permissions.
         It defaults to unauthenticated_output when not set.
-        Note: needs to be a function with no argument or static outputs.
+        Note: can be static output, a function with no argument, or a function
+        accepting a ``path`` keyword argument.
     :param groups: List of authorized user groups
         or a python function to return a list of groups.
         If this is a function, will be called with group_lookup dict as kwargs.
@@ -170,11 +192,6 @@ def protected(
         if iscoroutinefunction(output):
 
             async def async_wrap(*args, **kwargs):
-                def process_output(output, *args, **kwargs):
-                    if isinstance(output, Callable):
-                        return output(*args, **kwargs)
-                    return output
-
                 path = _kwargs.get("path_template") or _kwargs.get("path")
                 authorized = check_groups(
                     groups=groups,
@@ -188,23 +205,18 @@ def protected(
                     path=path,
                 )
                 if authorized is None:
-                    result = process_output(unauthenticated_output)
+                    result = _process_output(unauthenticated_output, path=path)
                     return await result if isawaitable(result) else result
                 if authorized:
                     result = output(*args, **kwargs)
                     return await result if isawaitable(result) else result
-                result = process_output(missing_permissions_output)
+                result = _process_output(missing_permissions_output, path=path)
                 return await result if isawaitable(result) else result
 
             return async_wrap
         else:
 
             def wrap(*args, **kwargs):
-                def process_output(output, *args, path=None, **kwargs):
-                    if isinstance(output, Callable):
-                        return output(*args, **kwargs)
-                    return output
-
                 path = _kwargs.get("path_template") or _kwargs.get("path")
                 authorized = check_groups(
                     groups=groups,
@@ -218,10 +230,10 @@ def protected(
                     path=path,
                 )
                 if authorized is None:
-                    return process_output(unauthenticated_output, path=path)
+                    return _process_output(unauthenticated_output, path=path)
                 if authorized:
-                    return process_output(output, *args, **kwargs)
-                return process_output(missing_permissions_output, path=path)
+                    return _process_output(output, *args, **kwargs)
+                return _process_output(missing_permissions_output, path=path)
 
             return wrap if isinstance(output, Callable) else wrap()
 
