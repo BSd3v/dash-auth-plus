@@ -7,7 +7,7 @@ import dash
 from dash.exceptions import PreventUpdate
 from flask import session, has_request_context
 from dash import html
-from inspect import iscoroutinefunction
+from inspect import iscoroutinefunction, isawaitable
 
 OutputVal = Union[Callable[[], Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
@@ -170,9 +170,9 @@ def protected(
         if iscoroutinefunction(output):
 
             async def async_wrap(*args, **kwargs):
-                def process_output(output, *args, path=None, **kwargs):
+                def process_output(output, *args, **kwargs):
                     if isinstance(output, Callable):
-                        return output(*args, path=path, **kwargs)
+                        return output(*args, **kwargs)
                     return output
 
                 path = _kwargs.get("path_template") or _kwargs.get("path")
@@ -188,21 +188,13 @@ def protected(
                     path=path,
                 )
                 if authorized is None:
-                    result = process_output(unauthenticated_output, path=path)
-                    return (
-                        await result
-                        if iscoroutinefunction(unauthenticated_output)
-                        else result
-                    )
+                    result = process_output(unauthenticated_output)
+                    return await result if isawaitable(result) else result
                 if authorized:
                     result = output(*args, **kwargs)
-                    return await result
-                result = process_output(missing_permissions_output, path=path)
-                return (
-                    await result
-                    if iscoroutinefunction(missing_permissions_output)
-                    else result
-                )
+                    return await result if isawaitable(result) else result
+                result = process_output(missing_permissions_output)
+                return await result if isawaitable(result) else result
 
             return async_wrap
         else:
