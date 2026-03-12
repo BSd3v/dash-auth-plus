@@ -450,7 +450,12 @@ class ClerkAuth(Auth):
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
-        self.before_logout()
+        try:
+            self.before_logout()
+        except Exception as e:
+            logging.error(
+                "Error in before_logout hook: %s\n%s", e, traceback.format_exc()
+            )
         if "user" in session:
             try:
                 self.clerk_client.sessions.revoke(
