@@ -128,6 +128,7 @@ def check_groups(
             return False
     if callable(groups):
         has_posonly_path = False
+        requires_path = False
         try:
             params = signature(groups).parameters
         except (TypeError, ValueError):
@@ -149,6 +150,10 @@ def check_groups(
             # argument, or if **kwargs is present and there is no positional-only
             # 'path' parameter that would conflict with a 'path=' kwarg.
             accepts_path = has_kw_path or (has_var_kw and not has_posonly_path)
+            # Determine whether the callable defines a required 'path' parameter
+            param_path = next((p for p in params.values() if p.name == "path"), None)
+            if param_path is not None and param_path.default is Parameter.empty:
+                requires_path = True
         kwargs = dict(group_lookup or {})
         if has_posonly_path and "path" in kwargs:
             raise TypeError(
@@ -157,12 +162,27 @@ def check_groups(
                 "Remove 'path' from group_lookup or update the callable to accept "
                 "'path' as a keyword argument."
             )
-        if accepts_path and "path" not in kwargs:
+        # If the callable requires a 'path' argument but none has been provided
+        # via group_lookup and no explicit 'path' is available, raise a clear
+        # error instead of silently passing path=None.
+        if requires_path and "path" not in kwargs and path is None:
+            raise TypeError(
+                "The 'groups' callable requires a 'path' argument, but neither "
+                "'path' nor group_lookup['path'] was provided."
+            )
+        # Only inject 'path' as a keyword argument when we actually have a
+        # non-None path value to pass.
+        if accepts_path and "path" not in kwargs and path is not None:
             kwargs["path"] = path
         if has_posonly_path and "path" not in kwargs:
             # For callables with a positional-only 'path' parameter, pass 'path'
-            # positionally rather than as a keyword argument.
-            groups = groups(path, **kwargs)
+            # positionally rather than as a keyword argument when it is available.
+            if path is not None:
+                groups = groups(path, **kwargs)
+            else:
+                # No path value to supply positionally; let Python raise a
+                # missing-argument error if 'path' is truly required.
+                groups = groups(**kwargs)
         else:
             groups = groups(**kwargs)
     if groups is None:
