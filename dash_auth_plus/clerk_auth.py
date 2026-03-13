@@ -445,7 +445,7 @@ class ClerkAuth(Auth):
                     "sideUpdate": {"_clerk_login_url": {"href": resp}},
                 }
             )
-        return flask.redirect(resp)
+        return redirect(resp)
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
