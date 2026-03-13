@@ -621,6 +621,14 @@ class ClerkAuth(Auth):
         return False
 
     def get_user_data(self):
+        """Return user data for the currently authenticated Clerk user.
+
+        The Clerk session identifier is intentionally excluded from the
+        returned dict to avoid leaking it to browser clients.  Server-side
+        session management (e.g. revoking a session on logout) relies on the
+        ``session_id`` stored in the server-side Flask session, not on this
+        return value.
+        """
         request_state = self.clerk_client.authenticate_request(
             request,
             self.authenticate_request_options(
@@ -629,8 +637,9 @@ class ClerkAuth(Auth):
         )
 
         if request_state.is_signed_in:
-            sid = request_state.payload.get("sid")
-            sess = self.clerk_client.sessions.get(session_id=sid)
+            sess = self.clerk_client.sessions.get(
+                session_id=request_state.payload.get("sid")
+            )
             user_data = self.clerk_client.users.get(user_id=sess.user_id)
-            return {**user_data.__dict__, "session_id": sid}
+            return {**user_data.__dict__}
         return False  # "user not authenticated"
