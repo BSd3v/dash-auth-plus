@@ -2,7 +2,7 @@ from __future__ import absolute_import
 from abc import ABC, abstractmethod
 from typing import Optional, Union
 
-from dash import Dash
+from dash import Dash, page_registry
 from flask import request
 
 from .public_routes import (
@@ -11,6 +11,7 @@ from .public_routes import (
     get_public_routes,
 )
 from .group_protection import protect_layouts
+from werkzeug.routing import Map, Rule
 
 
 class Auth(ABC):
@@ -121,14 +122,38 @@ class Auth(ABC):
             if public_routes.test(request.path) or self.is_authorized():
                 return None
 
-            # When auth_protect_layouts is enabled, avoid redirecting only for
-            # specific Dash internal endpoints that are expected to be publicly
-            # accessible and may break if redirected.
-            if self.auth_protect_layouts and request.path in (
-                "/_dash-layout",
-                "/_dash-dependencies",
-            ):
-                return None
+            # When auth_protect_layouts is enabled, avoid redirecting only for registered pages
+            if self.auth_protect_layouts:
+                # For Dash 2.x/3.x, use page_registry
+                page_paths = [
+                    pg["path"] for pg in page_registry.values() if "path" in pg
+                ]
+                page_templates = [
+                    pg.get("path_template")
+                    for pg in page_registry.values()
+                    if pg.get("path_template")
+                ]
+
+                # Check if request.path matches any page path
+                if request.path in page_paths:
+                    return None
+
+                # Check if request.path matches any page template
+                if page_templates:
+                    map_adapter = Map([Rule(t) for t in page_templates]).bind("")
+                    try:
+                        map_adapter.match(request.path)
+                        return None
+                    except Exception:
+                        pass
+
+                # Also allow Dash internal endpoints
+                if request.path in (
+                    "/_dash-layout",
+                    "/_dash-dependencies",
+                    "/_dash-component-suites",
+                ):
+                    return None
 
             # Otherwise, ask the user to log in
             return self.login_request()
