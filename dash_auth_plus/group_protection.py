@@ -300,10 +300,31 @@ def protected(
                     path=path,
                 )
                 if authorized is None:
-                    return _process_output(unauthenticated_output, path=path)
+                    result = _process_output(unauthenticated_output, path=path)
+                    if isawaitable(result):
+                        raise TypeError(
+                            "Got awaitable from 'unauthenticated_output' in synchronous "
+                            "protected view/callback. Async outputs are only supported "
+                            "when the wrapped function is async."
+                        )
+                    return result
                 if authorized:
-                    return _process_output(output, *args, **kwargs)
-                return _process_output(missing_permissions_output, path=path)
+                    result = _process_output(output, *args, **kwargs)
+                    if isawaitable(result):
+                        raise TypeError(
+                            "Got awaitable from 'output' in synchronous protected "
+                            "view/callback. Async outputs are only supported when the "
+                            "wrapped function is async."
+                        )
+                    return result
+                result = _process_output(missing_permissions_output, path=path)
+                if isawaitable(result):
+                    raise TypeError(
+                        "Got awaitable from 'missing_permissions_output' in synchronous "
+                        "protected view/callback. Async outputs are only supported when "
+                        "the wrapped function is async."
+                    )
+                return result
 
             return wrap if callable(output) else wrap()
 
