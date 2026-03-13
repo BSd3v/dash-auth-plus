@@ -133,10 +133,22 @@ def check_groups(
             # callable's signature cannot be inspected (e.g. some built-ins).
             accepts_path = False
         else:
-            accepts_path = any(
-                p.name == "path" and p.kind is not Parameter.POSITIONAL_ONLY
+            has_kw_path = any(
+                p.name == "path"
+                and p.kind in (Parameter.KEYWORD_ONLY, Parameter.POSITIONAL_OR_KEYWORD)
                 for p in params.values()
-            ) or any(p.kind == Parameter.VAR_KEYWORD for p in params.values())
+            )
+            has_posonly_path = any(
+                p.name == "path" and p.kind is Parameter.POSITIONAL_ONLY
+                for p in params.values()
+            )
+            has_var_kw = any(
+                p.kind == Parameter.VAR_KEYWORD for p in params.values()
+            )
+            # Only inject 'path' as a keyword if it is accepted as a keyword
+            # argument, or if **kwargs is present and there is no positional-only
+            # 'path' parameter that would conflict with a 'path=' kwarg.
+            accepts_path = has_kw_path or (has_var_kw and not has_posonly_path)
         kwargs = dict(group_lookup or {})
         if accepts_path and "path" not in kwargs:
             kwargs["path"] = path
