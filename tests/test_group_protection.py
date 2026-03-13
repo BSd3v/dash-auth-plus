@@ -141,8 +141,34 @@ def test_gp012_callable_groups_with_path():
 
         assert check_groups(groups_with_path, path="/dashboard") is True
         assert received_path["path"] == "/dashboard"
-        
-        
+
+def test_gp013_callable_groups_path_in_group_lookup_precedence():
+    """Explicit group_lookup['path'] should be preserved for callable groups."""
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["admin"],
+        }
+
+        received_path = {}
+
+        def groups_with_path(path=None):
+            received_path["path"] = path
+            return ["admin"]
+
+        assert (
+            check_groups(
+                groups_with_path,
+                path="/from-arg",
+                group_lookup={"path": "/from-lookup"},
+            )
+            is True
+        )
+        assert received_path["path"] == "/from-lookup"
+
+
 def test_gp005_protected_async_callable_outputs():
     """Callable unauthenticated/missing_permissions outputs must not receive
     unexpected keyword arguments (e.g. ``path``) in the async branch."""

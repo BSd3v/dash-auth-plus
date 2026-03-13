@@ -29,12 +29,8 @@ def _process_output(output, *args, path=None, **kwargs):
         for param in output_signature.parameters.values()
     )
     path_param = output_signature.parameters.get("path")
-    if (
-        supports_kwargs
-        or (
-            path_param is not None
-            and path_param.kind is not Parameter.POSITIONAL_ONLY
-        )
+    if supports_kwargs or (
+        path_param is not None and path_param.kind is not Parameter.POSITIONAL_ONLY
     ):
         return output(*args, path=path, **kwargs)
     return output(*args, **kwargs)
@@ -89,10 +85,14 @@ def check_groups(
     :param groups_str_split: Used to split groups if provided as a string
     :param check_type: Type of check to perform.
         Either "one_of", "all_of" or "none_of"
+    :param path: Current route path. When ``groups`` is callable, this is only
+        forwarded as a ``path`` keyword argument if the callable accepts
+        ``path`` (or ``**kwargs``).
     :param group_lookup: A dictionary of kwargs to be passed
         if groups is a function.
         e.g. {"path": "/test"} will work with this as a
-        groups function: check_path(path)
+        groups function: check_path(path). If ``group_lookup`` already contains
+        ``path``, that explicit value is used instead of ``path=...``.
     :param restricted_users: List of restricted users or a python function
         to return a list of users.
          If this is a function, will be called with
@@ -136,9 +136,7 @@ def check_groups(
             accepts_path = any(
                 p.name == "path" and p.kind is not Parameter.POSITIONAL_ONLY
                 for p in params.values()
-            ) or any(
-                p.kind == Parameter.VAR_KEYWORD for p in params.values()
-            )
+            ) or any(p.kind == Parameter.VAR_KEYWORD for p in params.values())
         kwargs = dict(group_lookup or {})
         if accepts_path and "path" not in kwargs:
             kwargs["path"] = path
