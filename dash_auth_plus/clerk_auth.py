@@ -554,6 +554,13 @@ class ClerkAuth(Auth):
         if not url:
             return None
 
+        # Reject URLs containing ASCII control characters (including CR/LF) to
+        # prevent header injection and issues in Flask/Werkzeug redirect().
+        for ch in url:
+            codepoint = ord(ch)
+            if codepoint < 32 or codepoint == 127:
+                return None
+
         parsed = urlparse(url)
 
         # If scheme or netloc are present, only allow same-origin absolute URLs
