@@ -7,10 +7,8 @@ import dash
 from authlib.integrations.flask_client import OAuth
 from dash_auth_plus.auth import Auth
 from flask import Response, redirect, request, session, jsonify
-from werkzeug.routing import Map, Rule
 from dotenv import load_dotenv
 from urllib.parse import urljoin, quote, unquote, urlparse
-from dash import get_app
 from werkzeug.routing import Rule, Map
 
 load_dotenv()
@@ -416,16 +414,16 @@ class ClerkAuth(Auth):
             )
 
     def _redirect_test(self):
-        app = get_app()
         registered_paths = []
         registered_templates = []
 
-        if hasattr(app, "pages"):
-            for page in app.pages.values():
+        if "pages_folder" in dash.get_app().config:
+            for page in dash.page_registry.values():
                 if "path" in page:
                     registered_paths.append(page["path"])
                 if "path_template" in page:
-                    registered_templates.append(page["path_template"])
+                    if page["path_template"]:
+                        registered_templates.append(page["path_template"])
 
         # Extract the path from the intended URL
         url_path = (
@@ -436,7 +434,6 @@ class ClerkAuth(Auth):
 
         # Check static paths
         valid = url_path in registered_paths
-
         # Check templates
         if not valid and registered_templates:
             map_adapter = Map([Rule(t) for t in registered_templates]).bind("")
@@ -446,7 +443,7 @@ class ClerkAuth(Auth):
             except Exception:
                 valid = False
 
-        session["url"] = request.url if valid else "/"
+        session["url"] = url_path if valid else "/"
         if session["url"] == self.login_route:
             del session["url"]
 
@@ -678,7 +675,7 @@ class ClerkAuth(Auth):
             "user" in session
             or map_adapter.test(request.path)
             or self.clerk_domain in request.url
-            or request.path.startswith("/.well-known/")
+            or (request.path and request.path.startswith("/.well-known/"))
         ):
             return True
         return False
