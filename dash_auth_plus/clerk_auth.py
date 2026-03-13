@@ -4,7 +4,6 @@ import traceback
 from typing import Dict, List, Optional, Union, Callable
 
 import dash
-import flask
 from authlib.integrations.flask_client import OAuth
 from dash_auth_plus.auth import Auth
 from flask import Response, redirect, request, session, jsonify
