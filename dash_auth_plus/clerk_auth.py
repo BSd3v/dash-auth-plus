@@ -455,13 +455,15 @@ class ClerkAuth(Auth):
                 "Error in before_logout hook: %s\n%s", e, traceback.format_exc()
             )
         if "user" in session:
-            try:
+            request_state = self.clerk_client.authenticate_request(
+                request,
+                self.authenticate_request_options(
+                    authorized_parties=self.allowed_parties,
+                ),
+            )
+            if request_state.is_signed_in:
                 self.clerk_client.sessions.revoke(
-                    session_id=session.get("user", {}).get("session_id", "")
-                )
-            except Exception as e:
-                logging.error(
-                    "Failed to revoke Clerk session: %s\n%s", e, traceback.format_exc()
+                    session_id=request_state.payload.get("sid")
                 )
         session.clear()
         response = Response(
@@ -505,7 +507,6 @@ class ClerkAuth(Auth):
                 "clerk_user_id": user.id,
                 "userid": user.username,
                 "email": email,
-                "session_id": sid,
             }
             if callable(self._user_groups):
                 session["user"]["groups"] = self._user_groups(email) + (
@@ -632,5 +633,5 @@ class ClerkAuth(Auth):
             sid = request_state.payload.get("sid")
             sess = self.clerk_client.sessions.get(session_id=sid)
             user_data = self.clerk_client.users.get(user_id=sess.user_id)
-            return {**user_data.__dict__, "session_id": sid}
+            return {**user_data.__dict__}
         return False  # "user not authenticated"
