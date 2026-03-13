@@ -139,10 +139,10 @@ def check_groups(
             ) or any(
                 p.kind == Parameter.VAR_KEYWORD for p in params.values()
             )
-        if accepts_path:
-            groups = groups(path=path, **(group_lookup or {}))
-        else:
-            groups = groups(**(group_lookup or {}))
+        kwargs = dict(group_lookup or {})
+        if accepts_path and "path" not in kwargs:
+            kwargs["path"] = path
+        groups = groups(**kwargs)
     if groups is None:
         return True
 
