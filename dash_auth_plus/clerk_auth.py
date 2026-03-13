@@ -425,26 +425,38 @@ class ClerkAuth(Auth):
                     if page["path_template"]:
                         registered_templates.append(page["path_template"])
 
-        # Extract the path from the intended URL
-        url_path = (
-            urlparse(request.url).path
+        # Extract the intended URL and preserve path + query + fragment
+        parsed_url = (
+            urlparse(request.url)
             if request.method == "GET"
-            else urlparse(request.headers.get("referer", request.host_url)).path
+            else urlparse(request.headers.get("referer", request.host_url))
         )
+        url_path = parsed_url.path
+        url_relative = parsed_url.path
+        if parsed_url.query:
+            url_relative += "?" + parsed_url.query
+        if parsed_url.fragment:
+            url_relative += "#" + parsed_url.fragment
 
-        # Check static paths
-        valid = url_path in registered_paths
-        # Check templates
-        if not valid and registered_templates:
-            map_adapter = Map([Rule(t) for t in registered_templates]).bind("")
-            try:
-                map_adapter.match(url_path)
-                valid = True
-            except Exception:
-                valid = False
+        # Determine validity of the path against registered Dash Pages, if any
+        if registered_paths or registered_templates:
+            # Check static paths
+            valid = url_path in registered_paths
+            # Check templates
+            if not valid and registered_templates:
+                map_adapter = Map([Rule(t) for t in registered_templates]).bind("")
+                try:
+                    map_adapter.match(url_path)
+                    valid = True
+                except Exception:
+                    valid = False
+        else:
+            # When no pages are registered (e.g. single-page apps), accept the URL
+            valid = True
 
-        session["url"] = url_path if valid else "/"
-        if session["url"] == self.login_route:
+        session["url"] = url_relative if valid else "/"
+        # Avoid redirecting back to the login route itself
+        if "url" in session and urlparse(session["url"]).path == self.login_route:
             del session["url"]
 
     def _create_redirect_uri(self):
