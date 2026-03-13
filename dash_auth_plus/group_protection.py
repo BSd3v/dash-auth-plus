@@ -8,9 +8,19 @@ from dash.exceptions import PreventUpdate
 from flask import session, has_request_context
 from dash import html
 from inspect import Parameter, iscoroutinefunction, isawaitable, signature
+from functools import lru_cache
 
 OutputVal = Union[Callable[..., Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
+
+
+@lru_cache(maxsize=None)
+def _cached_signature(func: Callable[..., Any]):
+    """
+    Cached wrapper around inspect.signature to avoid repeated introspection
+    on the same callable in hot paths.
+    """
+    return signature(func)
 
 
 def _process_output(output, *args, path=None, **kwargs):
@@ -20,7 +30,7 @@ def _process_output(output, *args, path=None, **kwargs):
         return output(*args, **kwargs)
 
     try:
-        output_signature = signature(output)
+        output_signature = _cached_signature(output)
     except (TypeError, ValueError):
         return output(*args, **kwargs)
 
