@@ -99,7 +99,7 @@ def test_gp004_protected_async():
         # Unauthenticated: no session user → static unauthenticated output
         del session["user"]
         assert asyncio.run(f_forbidden()) == "unauthenticated"
-
+        
 def test_gp005_callable_groups_without_path():
     """Callable groups that don't accept 'path' must not receive it (backwards compat)."""
     app = Flask(__name__)
