@@ -100,7 +100,7 @@ def test_gp004_protected_async():
         del session["user"]
         assert asyncio.run(f_forbidden()) == "unauthenticated"
 
-def test_gp011_callable_groups_without_path():
+def test_gp005_callable_groups_without_path():
     """Callable groups that don't accept 'path' must not receive it (backwards compat)."""
     app = Flask(__name__)
     app.secret_key = "Test!"
@@ -123,7 +123,7 @@ def test_gp011_callable_groups_without_path():
         assert check_groups(groups_only_kwargs, path="/some/path") is True
 
 
-def test_gp012_callable_groups_with_path():
+def test_gp006_callable_groups_with_path():
     """Callable groups that accept 'path' should receive it."""
     app = Flask(__name__)
     app.secret_key = "Test!"
@@ -142,7 +142,7 @@ def test_gp012_callable_groups_with_path():
         assert check_groups(groups_with_path, path="/dashboard") is True
         assert received_path["path"] == "/dashboard"
 
-def test_gp013_callable_groups_path_in_group_lookup_precedence():
+def test_gp007_callable_groups_path_in_group_lookup_precedence():
     """Explicit group_lookup['path'] should be preserved for callable groups."""
     app = Flask(__name__)
     app.secret_key = "Test!"
@@ -169,7 +169,7 @@ def test_gp013_callable_groups_path_in_group_lookup_precedence():
         assert received_path["path"] == "/from-lookup"
 
 
-def test_gp005_protected_async_callable_outputs():
+def test_gp008_protected_async_callable_outputs():
     """Callable unauthenticated/missing_permissions outputs must not receive
     unexpected keyword arguments (e.g. ``path``) in the async branch."""
     app = Flask(__name__)
@@ -197,7 +197,7 @@ def test_gp005_protected_async_callable_outputs():
         assert asyncio.run(f_forbidden()) == "unauthenticated"
 
 
-def test_gp006_protected_async_async_callable_outputs():
+def test_gp009_protected_async_async_callable_outputs():
     """Async callable outputs should be awaited based on the returned value
     being awaitable, not solely on ``iscoroutinefunction``."""
     app = Flask(__name__)
@@ -230,7 +230,7 @@ def test_gp006_protected_async_async_callable_outputs():
         assert asyncio.run(f_forbidden()) == "unauthenticated"
 
 
-def test_gp007_protected_async_callable_outputs_with_path():
+def test_gp010_protected_async_callable_outputs_with_path():
     app = Flask(__name__)
     app.secret_key = "Test!"
 
@@ -255,7 +255,7 @@ def test_gp007_protected_async_callable_outputs_with_path():
         assert asyncio.run(f_forbidden()) == "unauthenticated:/triage-path"
 
 
-def test_gp008_protected_async_callable_outputs_with_path_kwargs():
+def test_gp011_protected_async_callable_outputs_with_path_kwargs():
     app = Flask(__name__)
     app.secret_key = "Test!"
 
@@ -286,7 +286,7 @@ def test_gp008_protected_async_callable_outputs_with_path_kwargs():
         assert asyncio.run(f_forbidden()) == "unauthenticated:/triage-kwargs"
 
 
-def test_gp009_protected_sync_callable_outputs_no_args():
+def test_gp012_protected_sync_callable_outputs_no_args():
     app = Flask(__name__)
     app.secret_key = "Test!"
 
@@ -310,7 +310,7 @@ def test_gp009_protected_sync_callable_outputs_no_args():
         assert f_forbidden() == "unauthenticated"
 
 
-def test_gp010_protected_sync_callable_outputs_with_path_and_kwargs():
+def test_gp013_protected_sync_callable_outputs_with_path_and_kwargs():
     app = Flask(__name__)
     app.secret_key = "Test!"
 
