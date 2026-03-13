@@ -455,15 +455,29 @@ class ClerkAuth(Auth):
                 "Error in before_logout hook: %s\n%s", e, traceback.format_exc()
             )
         if "user" in session:
-            request_state = self.clerk_client.authenticate_request(
-                request,
-                self.authenticate_request_options(
-                    authorized_parties=self.allowed_parties,
-                ),
-            )
-            if request_state.is_signed_in:
-                self.clerk_client.sessions.revoke(
-                    session_id=request_state.payload.get("sid")
+            try:
+                request_state = self.clerk_client.authenticate_request(
+                    request,
+                    self.authenticate_request_options(
+                        authorized_parties=self.allowed_parties,
+                    ),
+                )
+                if request_state.is_signed_in:
+                    try:
+                        self.clerk_client.sessions.revoke(
+                            session_id=request_state.payload.get("sid")
+                        )
+                    except Exception as e:
+                        logging.error(
+                            "Error revoking Clerk session during logout: %s\n%s",
+                            e,
+                            traceback.format_exc(),
+                        )
+            except Exception as e:
+                logging.error(
+                    "Error authenticating Clerk request during logout: %s\n%s",
+                    e,
+                    traceback.format_exc(),
                 )
         session.clear()
         response = Response(
