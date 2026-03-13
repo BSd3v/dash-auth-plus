@@ -121,9 +121,13 @@ class Auth(ABC):
             if public_routes.test(request.path) or self.is_authorized():
                 return None
 
-            if self.auth_protect_layouts:
-                # If auth_protect_layouts is enabled, the user may be unauthenticated but still allowed to access the route,
-                # in which case we don't want to trigger the login flow and instead just allow access to the route
+            # When auth_protect_layouts is enabled, avoid redirecting only for
+            # specific Dash internal endpoints that are expected to be publicly
+            # accessible and may break if redirected.
+            if self.auth_protect_layouts and request.path in (
+                "/_dash-layout",
+                "/_dash-dependencies",
+            ):
                 return None
 
             # Otherwise, ask the user to log in
