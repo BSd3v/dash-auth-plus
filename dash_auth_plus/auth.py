@@ -14,6 +14,44 @@ from .group_protection import protect_layouts
 from werkzeug.routing import Map, Rule
 
 
+# Cached data derived from Dash's page_registry to avoid recomputing
+# these structures on every request when auth_protect_layouts is enabled.
+_cached_page_paths = None
+_cached_page_templates_adapter = None
+
+
+def _get_page_paths_and_adapter():
+    """
+    Lazily compute and cache page paths and the compiled MapAdapter
+    used to match path templates. This avoids rebuilding these
+    structures on every request in the before_request handler.
+    """
+    global _cached_page_paths, _cached_page_templates_adapter
+
+    # If already cached, reuse.
+    if _cached_page_paths is not None:
+        return _cached_page_paths, _cached_page_templates_adapter
+
+    # For Dash 2.x/3.x, use page_registry to build the paths and templates.
+    page_paths = [pg["path"] for pg in page_registry.values() if "path" in pg]
+    page_templates = [
+        pg.get("path_template")
+        for pg in page_registry.values()
+        if pg.get("path_template")
+    ]
+
+    # Cache the simple path list.
+    _cached_page_paths = page_paths
+
+    # Build and cache the MapAdapter only if templates exist.
+    if page_templates:
+        _cached_page_templates_adapter = Map([Rule(t) for t in page_templates]).bind("")
+    else:
+        _cached_page_templates_adapter = None
+
+    return _cached_page_paths, _cached_page_templates_adapter
+
+
 class Auth(ABC):
     def __init__(
         self,
@@ -124,23 +162,16 @@ class Auth(ABC):
 
             # When auth_protect_layouts is enabled, avoid redirecting only for registered pages
             if self.auth_protect_layouts:
-                # For Dash 2.x/3.x, use page_registry
-                page_paths = [
-                    pg["path"] for pg in page_registry.values() if "path" in pg
-                ]
-                page_templates = [
-                    pg.get("path_template")
-                    for pg in page_registry.values()
-                    if pg.get("path_template")
-                ]
+                # Use cached data derived from page_registry to avoid
+                # recomputing these structures on every request.
+                page_paths, map_adapter = _get_page_paths_and_adapter()
 
                 # Check if request.path matches any page path
                 if request.path in page_paths:
                     return None
 
                 # Check if request.path matches any page template
-                if page_templates:
-                    map_adapter = Map([Rule(t) for t in page_templates]).bind("")
+                if map_adapter is not None:
                     try:
                         map_adapter.match(request.path)
                         return None
