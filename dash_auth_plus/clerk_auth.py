@@ -578,7 +578,10 @@ class ClerkAuth(Auth):
             safe_url = self._get_safe_redirect_url(raw_redirect_url)
             if safe_url:
                 current_url = session.get("url")
-                if not current_url or current_url in (self.login_route, self.callback_route):
+                if not current_url or current_url in (
+                    self.login_route,
+                    self.callback_route,
+                ):
                     session["url"] = safe_url
 
         request_state = self.clerk_client.authenticate_request(
