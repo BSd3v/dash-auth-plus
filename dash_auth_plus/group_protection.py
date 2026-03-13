@@ -143,7 +143,7 @@ def check_groups(
         has_posonly_path = False
         requires_path = False
         try:
-            params = signature(groups).parameters
+            params = _cached_signature(groups).parameters
         except (TypeError, ValueError):
             # Fall back to calling without injecting a 'path' kwarg if the
             # callable's signature cannot be inspected (e.g. some built-ins).
