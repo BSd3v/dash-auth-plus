@@ -126,6 +126,7 @@ def check_groups(
             # User is restricted
             return False
     if callable(groups):
+        has_posonly_path = False
         try:
             params = signature(groups).parameters
         except (TypeError, ValueError):
@@ -150,6 +151,13 @@ def check_groups(
             # 'path' parameter that would conflict with a 'path=' kwarg.
             accepts_path = has_kw_path or (has_var_kw and not has_posonly_path)
         kwargs = dict(group_lookup or {})
+        if has_posonly_path and "path" in kwargs:
+            raise TypeError(
+                "The 'groups' callable defines a positional-only 'path' parameter, "
+                "but 'path' was provided via group_lookup as a keyword argument. "
+                "Remove 'path' from group_lookup or update the callable to accept "
+                "'path' as a keyword argument."
+            )
         if accepts_path and "path" not in kwargs:
             kwargs["path"] = path
         groups = groups(**kwargs)
