@@ -146,11 +146,11 @@ class ClerkAuth(Auth):
         :param page_container: string, id of the page container in the app.
             If not provided, this will set the page_container_test to True,
             meaning all pathname callbacks will be judged.
-        default_html_style: str, optional
+        :param default_html_style: str, optional
             Custom CSS styles to inject into the HTML head, by default None.
-        before_logout: Callable, optional
+        :param before_logout: Callable, optional
             A function to call before logging out the user, by default None.
-             This can be used to perform cleanup actions or logging before the user is logged out.
+            This can be used to perform cleanup actions or logging before the user is logged out.
 
         Raises
         ------
