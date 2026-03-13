@@ -100,7 +100,7 @@ def test_gp004_protected_async():
         del session["user"]
         assert asyncio.run(f_forbidden()) == "unauthenticated"
 
-def test_gp007_callable_groups_without_path():
+def test_gp011_callable_groups_without_path():
     """Callable groups that don't accept 'path' must not receive it (backwards compat)."""
     app = Flask(__name__)
     app.secret_key = "Test!"
@@ -123,7 +123,7 @@ def test_gp007_callable_groups_without_path():
         assert check_groups(groups_only_kwargs, path="/some/path") is True
 
 
-def test_gp008_callable_groups_with_path():
+def test_gp012_callable_groups_with_path():
     """Callable groups that accept 'path' should receive it."""
     app = Flask(__name__)
     app.secret_key = "Test!"
