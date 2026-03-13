@@ -536,7 +536,29 @@ class ClerkAuth(Auth):
 
         parsed = urlparse(url)
 
-        # Disallow any scheme or netloc (host)
+        # If scheme or netloc are present, only allow same-origin absolute URLs
+        if parsed.scheme or parsed.netloc:
+            try:
+                current_scheme = request.scheme
+                current_host = request.host
+            except RuntimeError:
+                # Outside of a request context; be conservative and reject
+                return None
+
+            # Reject if the absolute URL is not same-origin
+            if parsed.scheme != current_scheme or parsed.netloc != current_host:
+                return None
+
+            # Normalize same-origin absolute URL to a relative path (+query/fragment)
+            url = parsed.path or "/"
+            if parsed.query:
+                url += "?" + parsed.query
+            if parsed.fragment:
+                url += "#" + parsed.fragment
+
+            parsed = urlparse(url)
+
+        # At this point, only relative URLs without scheme/netloc are allowed
         if parsed.scheme or parsed.netloc:
             return None
 
