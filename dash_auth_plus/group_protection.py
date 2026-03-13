@@ -7,7 +7,7 @@ import dash
 from dash.exceptions import PreventUpdate
 from flask import session, has_request_context
 from dash import html
-from inspect import Parameter, iscoroutinefunction, isawaitable, signature, Parameter
+from inspect import Parameter, iscoroutinefunction, isawaitable, signature
 
 OutputVal = Union[Callable[..., Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
