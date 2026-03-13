@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import patch
 
 from dash_auth_plus import list_groups, check_groups, protected
 from flask import Flask, session
@@ -356,3 +357,20 @@ def test_gp013_protected_sync_callable_outputs_with_path_and_kwargs():
 
         del session["user"]
         assert f_forbidden_with_kwargs() == "unauthenticated:/triage-sync-kwargs"
+
+
+def test_gp014_callable_groups_signature_failure_does_not_inject_path():
+    """If inspect.signature fails, check_groups should not inject path kwarg."""
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        def groups_no_path():
+            return ["default"]
+
+        with patch("dash_auth_plus.group_protection.signature", side_effect=TypeError):
+            assert check_groups(groups_no_path, path="/should-not-be-passed") is True

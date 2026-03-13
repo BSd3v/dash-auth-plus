@@ -144,9 +144,7 @@ def check_groups(
                 p.name == "path" and p.kind is Parameter.POSITIONAL_ONLY
                 for p in params.values()
             )
-            has_var_kw = any(
-                p.kind == Parameter.VAR_KEYWORD for p in params.values()
-            )
+            has_var_kw = any(p.kind == Parameter.VAR_KEYWORD for p in params.values())
             # Only inject 'path' as a keyword if it is accepted as a keyword
             # argument, or if **kwargs is present and there is no positional-only
             # 'path' parameter that would conflict with a 'path=' kwarg.
