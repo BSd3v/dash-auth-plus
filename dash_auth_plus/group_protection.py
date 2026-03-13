@@ -14,11 +14,24 @@ OutputVal = Union[Callable[..., Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
 
 
-@lru_cache(maxsize=256)
 def _cached_signature(func: Callable[..., Any]):
     """
     Cached wrapper around inspect.signature to avoid repeated introspection
     on the same callable in hot paths.
+
+    Normalizes bound methods to their underlying function to avoid retaining
+    references to instance objects in the LRU cache.
+    """
+    # For bound methods, use the underlying function object so that the cache
+    # does not hold strong references to the instance.
+    base_func = getattr(func, "__func__", func)
+    return _cached_signature_impl(base_func)
+
+
+@lru_cache(maxsize=256)
+def _cached_signature_impl(func: Callable[..., Any]):
+    """
+    Internal cached implementation keyed on the underlying function object.
     """
     return signature(func)
 
