@@ -28,7 +28,14 @@ def _process_output(output, *args, path=None, **kwargs):
         param.kind == Parameter.VAR_KEYWORD
         for param in output_signature.parameters.values()
     )
-    if "path" in output_signature.parameters or supports_kwargs:
+    path_param = output_signature.parameters.get("path")
+    if (
+        supports_kwargs
+        or (
+            path_param is not None
+            and path_param.kind is not Parameter.POSITIONAL_ONLY
+        )
+    ):
         return output(*args, path=path, **kwargs)
     return output(*args, **kwargs)
 
