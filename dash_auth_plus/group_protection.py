@@ -32,7 +32,10 @@ def _process_output(output, *args, path=None, **kwargs):
     if supports_kwargs or (
         path_param is not None and path_param.kind is not Parameter.POSITIONAL_ONLY
     ):
-        return output(*args, path=path, **kwargs)
+        # Merge/override 'path' into kwargs so it is only passed once.
+        merged_kwargs = dict(kwargs)
+        merged_kwargs["path"] = path
+        return output(*args, **merged_kwargs)
     return output(*args, **kwargs)
 
 
