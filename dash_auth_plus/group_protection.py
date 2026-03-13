@@ -14,7 +14,7 @@ OutputVal = Union[Callable[..., Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=256)
 def _cached_signature(func: Callable[..., Any]):
     """
     Cached wrapper around inspect.signature to avoid repeated introspection
