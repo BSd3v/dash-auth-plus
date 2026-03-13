@@ -159,7 +159,12 @@ def check_groups(
             )
         if accepts_path and "path" not in kwargs:
             kwargs["path"] = path
-        groups = groups(**kwargs)
+        if has_posonly_path and "path" not in kwargs:
+            # For callables with a positional-only 'path' parameter, pass 'path'
+            # positionally rather than as a keyword argument.
+            groups = groups(path, **kwargs)
+        else:
+            groups = groups(**kwargs)
     if groups is None:
         return True
 
