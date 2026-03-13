@@ -126,10 +126,19 @@ def check_groups(
             # User is restricted
             return False
     if callable(groups):
-        params = signature(groups).parameters
-        accepts_path = "path" in params or any(
-            p.kind == Parameter.VAR_KEYWORD for p in params.values()
-        )
+        try:
+            params = signature(groups).parameters
+        except (TypeError, ValueError):
+            # Fall back to calling without injecting a 'path' kwarg if the
+            # callable's signature cannot be inspected (e.g. some built-ins).
+            accepts_path = False
+        else:
+            accepts_path = any(
+                p.name == "path" and p.kind is not Parameter.POSITIONAL_ONLY
+                for p in params.values()
+            ) or any(
+                p.kind == Parameter.VAR_KEYWORD for p in params.values()
+            )
         if accepts_path:
             groups = groups(path=path, **(group_lookup or {}))
         else:
