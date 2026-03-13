@@ -1,6 +1,7 @@
 import asyncio
 from unittest.mock import patch
 
+import pytest
 from dash_auth_plus import list_groups, check_groups, protected
 from flask import Flask, session
 
@@ -100,7 +101,8 @@ def test_gp004_protected_async():
         # Unauthenticated: no session user → static unauthenticated output
         del session["user"]
         assert asyncio.run(f_forbidden()) == "unauthenticated"
-        
+
+
 def test_gp005_callable_groups_without_path():
     """Callable groups that don't accept 'path' must not receive it (backwards compat)."""
     app = Flask(__name__)
@@ -374,3 +376,19 @@ def test_gp014_callable_groups_signature_failure_does_not_inject_path():
 
         with patch("dash_auth_plus.group_protection.signature", side_effect=TypeError):
             assert check_groups(groups_no_path, path="/should-not-be-passed") is True
+
+
+def test_gp015_callable_groups_posonly_path_in_lookup_raises_clear_error():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        def groups_with_posonly_path(path, /):
+            return ["default"]
+
+        with pytest.raises(TypeError, match="positional-only 'path' parameter"):
+            check_groups(groups_with_posonly_path, group_lookup={"path": "/from-lookup"})
