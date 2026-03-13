@@ -159,12 +159,14 @@ def protected(
 
     :param unauthenticated_output: Output when the user is not authenticated.
         Note: can be static output, a function with no argument, or a function
-        accepting a ``path`` keyword argument.
+        accepting a ``path`` keyword argument (either explicitly or via
+        ``**kwargs``).
     :param missing_permissions_output: Output when the user is authenticated
         but does not have the right permissions.
         It defaults to unauthenticated_output when not set.
         Note: can be static output, a function with no argument, or a function
-        accepting a ``path`` keyword argument.
+        accepting a ``path`` keyword argument (either explicitly or via
+        ``**kwargs``).
     :param groups: List of authorized user groups
         or a python function to return a list of groups.
         If this is a function, will be called with group_lookup dict as kwargs.
