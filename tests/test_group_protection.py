@@ -142,6 +142,7 @@ def test_gp006_callable_groups_with_path():
         assert check_groups(groups_with_path, path="/dashboard") is True
         assert received_path["path"] == "/dashboard"
 
+
 def test_gp007_callable_groups_path_in_group_lookup_precedence():
     """Explicit group_lookup['path'] should be preserved for callable groups."""
     app = Flask(__name__)
