@@ -10,7 +10,7 @@ from dash_auth_plus.auth import Auth
 from flask import Response, redirect, request, session, jsonify
 from werkzeug.routing import Map, Rule
 from dotenv import load_dotenv
-from urllib.parse import urljoin, quote, unquote
+from urllib.parse import urljoin, quote, unquote, urlparse
 
 load_dotenv()
 
@@ -524,11 +524,36 @@ class ClerkAuth(Auth):
             return redirect(url)
         return {"status": "ok", "content": "User logged in successfully."}
 
+    def _get_safe_redirect_url(self, url: str) -> Optional[str]:
+        """
+        Validate a user-supplied redirect URL and return a safe relative URL or None.
+
+        Only relative URLs without scheme/netloc and starting with a single '/'
+        are considered safe. This prevents open-redirects to external domains.
+        """
+        if not url:
+            return None
+
+        parsed = urlparse(url)
+
+        # Disallow any scheme or netloc (host)
+        if parsed.scheme or parsed.netloc:
+            return None
+
+        # Require a leading '/' and disallow protocol-relative URLs starting with '//'
+        if not url.startswith("/") or url.startswith("//"):
+            return None
+
+        return url
+
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
         if request.args.get("redirect_url") and not session.get("url"):
-            # If redirect_uri is provided, use it
-            session["url"] = unquote(request.args.get("redirect_url"))
+            # If redirect_uri is provided, validate and use it only if safe
+            raw_redirect_url = unquote(request.args.get("redirect_url"))
+            safe_url = self._get_safe_redirect_url(raw_redirect_url)
+            if safe_url:
+                session["url"] = safe_url
 
         request_state = self.clerk_client.authenticate_request(
             request,
