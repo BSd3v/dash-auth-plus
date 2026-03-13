@@ -29,12 +29,8 @@ def _process_output(output, *args, path=None, **kwargs):
         for param in output_signature.parameters.values()
     )
     path_param = output_signature.parameters.get("path")
-    if (
-        supports_kwargs
-        or (
-            path_param is not None
-            and path_param.kind is not Parameter.POSITIONAL_ONLY
-        )
+    if supports_kwargs or (
+        path_param is not None and path_param.kind is not Parameter.POSITIONAL_ONLY
     ):
         return output(*args, path=path, **kwargs)
     return output(*args, **kwargs)
@@ -89,10 +85,15 @@ def check_groups(
     :param groups_str_split: Used to split groups if provided as a string
     :param check_type: Type of check to perform.
         Either "one_of", "all_of" or "none_of"
+    :param path: Current route path. When ``groups`` is callable, this is only
+        forwarded as a ``path`` keyword argument if the callable accepts
+        ``path`` as a keyword argument or arbitrary keyword arguments via
+        ``**kwargs``.
     :param group_lookup: A dictionary of kwargs to be passed
         if groups is a function.
         e.g. {"path": "/test"} will work with this as a
-        groups function: check_path(path)
+        groups function: check_path(path). If ``group_lookup`` already contains
+        ``path``, that explicit value is used instead of ``path=...``.
     :param restricted_users: List of restricted users or a python function
         to return a list of users.
          If this is a function, will be called with
@@ -126,7 +127,44 @@ def check_groups(
             # User is restricted
             return False
     if callable(groups):
-        groups = groups(path=path, **(group_lookup or {}))
+        has_posonly_path = False
+        try:
+            params = signature(groups).parameters
+        except (TypeError, ValueError):
+            # Fall back to calling without injecting a 'path' kwarg if the
+            # callable's signature cannot be inspected (e.g. some built-ins).
+            accepts_path = False
+        else:
+            has_kw_path = any(
+                p.name == "path"
+                and p.kind in (Parameter.KEYWORD_ONLY, Parameter.POSITIONAL_OR_KEYWORD)
+                for p in params.values()
+            )
+            has_posonly_path = any(
+                p.name == "path" and p.kind is Parameter.POSITIONAL_ONLY
+                for p in params.values()
+            )
+            has_var_kw = any(p.kind == Parameter.VAR_KEYWORD for p in params.values())
+            # Only inject 'path' as a keyword if it is accepted as a keyword
+            # argument, or if **kwargs is present and there is no positional-only
+            # 'path' parameter that would conflict with a 'path=' kwarg.
+            accepts_path = has_kw_path or (has_var_kw and not has_posonly_path)
+        kwargs = dict(group_lookup or {})
+        if has_posonly_path and "path" in kwargs:
+            raise TypeError(
+                "The 'groups' callable defines a positional-only 'path' parameter, "
+                "but 'path' was provided via group_lookup as a keyword argument. "
+                "Remove 'path' from group_lookup or update the callable to accept "
+                "'path' as a keyword argument."
+            )
+        if accepts_path and "path" not in kwargs:
+            kwargs["path"] = path
+        if has_posonly_path and "path" not in kwargs:
+            # For callables with a positional-only 'path' parameter, pass 'path'
+            # positionally rather than as a keyword argument.
+            groups = groups(path, **kwargs)
+        else:
+            groups = groups(**kwargs)
     if groups is None:
         return True
 

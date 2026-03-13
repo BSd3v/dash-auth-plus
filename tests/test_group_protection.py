@@ -1,5 +1,7 @@
 import asyncio
+from unittest.mock import patch
 
+import pytest
 from dash_auth_plus import list_groups, check_groups, protected
 from flask import Flask, session
 
@@ -101,7 +103,77 @@ def test_gp004_protected_async():
         assert asyncio.run(f_forbidden()) == "unauthenticated"
 
 
-def test_gp005_protected_async_callable_outputs():
+def test_gp005_callable_groups_without_path():
+    """Callable groups that don't accept 'path' must not receive it (backwards compat)."""
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        def groups_no_path():
+            return ["default"]
+
+        # This would raise TypeError before the fix if path was unconditionally passed
+        assert check_groups(groups_no_path, path="/some/path") is True
+
+        def groups_only_kwargs(**kwargs):
+            return ["default"]
+
+        assert check_groups(groups_only_kwargs, path="/some/path") is True
+
+
+def test_gp006_callable_groups_with_path():
+    """Callable groups that accept 'path' should receive it."""
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["admin"],
+        }
+
+        received_path = {}
+
+        def groups_with_path(path=None):
+            received_path["path"] = path
+            return ["admin"]
+
+        assert check_groups(groups_with_path, path="/dashboard") is True
+        assert received_path["path"] == "/dashboard"
+
+
+def test_gp007_callable_groups_path_in_group_lookup_precedence():
+    """Explicit group_lookup['path'] should be preserved for callable groups."""
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["admin"],
+        }
+
+        received_path = {}
+
+        def groups_with_path(path=None):
+            received_path["path"] = path
+            return ["admin"]
+
+        assert (
+            check_groups(
+                groups_with_path,
+                path="/from-arg",
+                group_lookup={"path": "/from-lookup"},
+            )
+            is True
+        )
+        assert received_path["path"] == "/from-lookup"
+
+
+def test_gp008_protected_async_callable_outputs():
     """Callable unauthenticated/missing_permissions outputs must not receive
     unexpected keyword arguments (e.g. ``path``) in the async branch."""
     app = Flask(__name__)
@@ -129,7 +201,7 @@ def test_gp005_protected_async_callable_outputs():
         assert asyncio.run(f_forbidden()) == "unauthenticated"
 
 
-def test_gp006_protected_async_async_callable_outputs():
+def test_gp009_protected_async_async_callable_outputs():
     """Async callable outputs should be awaited based on the returned value
     being awaitable, not solely on ``iscoroutinefunction``."""
     app = Flask(__name__)
@@ -162,7 +234,7 @@ def test_gp006_protected_async_async_callable_outputs():
         assert asyncio.run(f_forbidden()) == "unauthenticated"
 
 
-def test_gp007_protected_async_callable_outputs_with_path():
+def test_gp010_protected_async_callable_outputs_with_path():
     app = Flask(__name__)
     app.secret_key = "Test!"
 
@@ -187,7 +259,7 @@ def test_gp007_protected_async_callable_outputs_with_path():
         assert asyncio.run(f_forbidden()) == "unauthenticated:/triage-path"
 
 
-def test_gp008_protected_async_callable_outputs_with_path_kwargs():
+def test_gp011_protected_async_callable_outputs_with_path_kwargs():
     app = Flask(__name__)
     app.secret_key = "Test!"
 
@@ -218,7 +290,7 @@ def test_gp008_protected_async_callable_outputs_with_path_kwargs():
         assert asyncio.run(f_forbidden()) == "unauthenticated:/triage-kwargs"
 
 
-def test_gp009_protected_sync_callable_outputs_no_args():
+def test_gp012_protected_sync_callable_outputs_no_args():
     app = Flask(__name__)
     app.secret_key = "Test!"
 
@@ -242,7 +314,7 @@ def test_gp009_protected_sync_callable_outputs_no_args():
         assert f_forbidden() == "unauthenticated"
 
 
-def test_gp010_protected_sync_callable_outputs_with_path_and_kwargs():
+def test_gp013_protected_sync_callable_outputs_with_path_and_kwargs():
     app = Flask(__name__)
     app.secret_key = "Test!"
 
@@ -287,3 +359,36 @@ def test_gp010_protected_sync_callable_outputs_with_path_and_kwargs():
 
         del session["user"]
         assert f_forbidden_with_kwargs() == "unauthenticated:/triage-sync-kwargs"
+
+
+def test_gp014_callable_groups_signature_failure_does_not_inject_path():
+    """If inspect.signature fails, check_groups should not inject path kwarg."""
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        def groups_no_path():
+            return ["default"]
+
+        with patch("dash_auth_plus.group_protection.signature", side_effect=TypeError):
+            assert check_groups(groups_no_path, path="/should-not-be-passed") is True
+
+
+def test_gp015_callable_groups_posonly_path_in_lookup_raises_clear_error():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        def groups_with_posonly_path(path, /):
+            return ["default"]
+
+        with pytest.raises(TypeError, match="positional-only 'path' parameter"):
+            check_groups(groups_with_posonly_path, group_lookup={"path": "/from-lookup"})
