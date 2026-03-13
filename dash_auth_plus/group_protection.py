@@ -87,7 +87,8 @@ def check_groups(
         Either "one_of", "all_of" or "none_of"
     :param path: Current route path. When ``groups`` is callable, this is only
         forwarded as a ``path`` keyword argument if the callable accepts
-        ``path`` (or ``**kwargs``).
+        ``path`` as a keyword argument or arbitrary keyword arguments via
+        ``**kwargs``.
     :param group_lookup: A dictionary of kwargs to be passed
         if groups is a function.
         e.g. {"path": "/test"} will work with this as a
