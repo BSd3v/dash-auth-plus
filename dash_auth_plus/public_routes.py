@@ -74,7 +74,8 @@ def public_callback(*callback_args, **callback_kwargs):
                 (
                     k
                     for k, v in GLOBAL_CALLBACK_MAP.items()
-                    if inspect.getsource(v["callback"]) == inspect.getsource(func)
+                    if "callback" in v
+                    and inspect.getsource(v["callback"]) == inspect.getsource(func)
                 ),
                 None,
             )

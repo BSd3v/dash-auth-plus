@@ -10,6 +10,8 @@ from flask import Response, redirect, request, session, jsonify
 from werkzeug.routing import Map, Rule
 from dotenv import load_dotenv
 from urllib.parse import urljoin, quote, unquote, urlparse
+from dash import get_app
+from werkzeug.routing import Rule, Map
 
 load_dotenv()
 
@@ -413,6 +415,41 @@ class ClerkAuth(Auth):
                 f"{self.clerk_script}\n</head>",
             )
 
+    def _redirect_test(self):
+        app = get_app()
+        registered_paths = []
+        registered_templates = []
+
+        if hasattr(app, "pages"):
+            for page in app.pages.values():
+                if "path" in page:
+                    registered_paths.append(page["path"])
+                if "path_template" in page:
+                    registered_templates.append(page["path_template"])
+
+        # Extract the path from the intended URL
+        url_path = (
+            urlparse(request.url).path
+            if request.method == "GET"
+            else urlparse(request.headers.get("referer", request.host_url)).path
+        )
+
+        # Check static paths
+        valid = url_path in registered_paths
+
+        # Check templates
+        if not valid and registered_templates:
+            map_adapter = Map([Rule(t) for t in registered_templates]).bind("")
+            try:
+                map_adapter.match(url_path)
+                valid = True
+            except Exception:
+                valid = False
+
+        session["url"] = request.url if valid else "/"
+        if session["url"] == self.login_route:
+            del session["url"]
+
     def _create_redirect_uri(self):
         """Create the redirect uri based on callback endpoint and idp."""
         kwargs = {"_external": True}
@@ -424,11 +461,8 @@ class ClerkAuth(Auth):
             "/sign-in?redirect_url="
             + quote(request.host_url[:-1] + self.callback_route, safe=""),
         )
-        session["url"] = (
-            request.url
-            if request.method == "GET"
-            else request.headers.get("referer", request.host_url)
-        )
+        if not session.get("url"):
+            self._redirect_test()
         if request.headers.get("X-Forwarded-Host"):
             host = request.headers.get("X-Forwarded-Host")
             redirect_uri = redirect_uri.replace(request.host, host, 1)

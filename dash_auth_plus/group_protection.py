@@ -471,13 +471,13 @@ def protect_layouts(
             if public_routes:
                 if isinstance(public_routes, list):
                     if not (
-                        pg["path"] in public_routes
+                        pg.get("path") in public_routes
                         or pg.get("path_template") in public_routes
                     ):
                         pg["layout"] = protected(**new_kwargs)(pg["layout"])
                 elif not (
                     public_routes.test(pg.get("path_template"))
-                    or public_routes.test(pg["path"])
+                    or public_routes.test(pg.get("path"))
                 ):
                     pg["layout"] = protected(**new_kwargs)(pg["layout"])
             else:
