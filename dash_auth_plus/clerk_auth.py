@@ -548,12 +548,16 @@ class ClerkAuth(Auth):
 
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
-        if request.args.get("redirect_url") and not session.get("url"):
-            # If redirect_uri is provided, validate and use it only if safe
+        if request.args.get("redirect_url"):
+            # If redirect_uri is provided, validate and use it only if safe.
+            # Allow it to overwrite session["url"] when the current value is
+            # unset or points to the login/callback route, to avoid redirect loops.
             raw_redirect_url = unquote(request.args.get("redirect_url"))
             safe_url = self._get_safe_redirect_url(raw_redirect_url)
             if safe_url:
-                session["url"] = safe_url
+                current_url = session.get("url")
+                if not current_url or current_url in (self.login_route, self.callback_route):
+                    session["url"] = safe_url
 
         request_state = self.clerk_client.authenticate_request(
             request,
