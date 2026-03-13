@@ -542,8 +542,14 @@ class ClerkAuth(Auth):
         """
         Validate a user-supplied redirect URL and return a safe relative URL or None.
 
-        Only relative URLs without scheme/netloc and starting with a single '/'
-        are considered safe. This prevents open-redirects to external domains.
+        The function accepts:
+        - Relative URLs without scheme/netloc that start with a single '/'.
+        - Absolute URLs with scheme/netloc only if they are same-origin with the
+          current request (same scheme and host); these are normalized to a
+          relative URL (path + optional query/fragment) before being returned.
+
+        Any URL that does not meet these criteria is rejected to prevent
+        open-redirects to external domains.
         """
         if not url:
             return None
