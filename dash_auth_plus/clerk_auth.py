@@ -197,7 +197,6 @@ class ClerkAuth(Auth):
         self.login_route = "/login"
         self.logout_route = "/logout"
         self.authenticate_request_options = AuthenticateRequestOptions
-        self.auth_protect_layouts_kwargs = auth_protect_layouts_kwargs or {}
         self.before_logout = before_logout or (lambda: None)
         host = app.server.config.get("SERVER_NAME") or "127.0.0.1"
         port = app.server.config.get("SERVER_PORT", 8050)
