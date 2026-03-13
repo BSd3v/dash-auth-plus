@@ -52,9 +52,10 @@ def _process_output(output, *args, path=None, **kwargs):
         for param in output_signature.parameters.values()
     )
     path_param = output_signature.parameters.get("path")
-    if supports_kwargs or (
-        path_param is not None and path_param.kind is not Parameter.POSITIONAL_ONLY
-    ):
+    has_posonly_path = (
+        path_param is not None and path_param.kind is Parameter.POSITIONAL_ONLY
+    )
+    if (supports_kwargs or path_param is not None) and not has_posonly_path:
         # Merge/override 'path' into kwargs so it is only passed once.
         merged_kwargs = dict(kwargs)
         merged_kwargs["path"] = path
