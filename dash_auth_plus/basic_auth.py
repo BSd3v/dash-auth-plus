@@ -89,7 +89,7 @@ class BasicAuth(Auth):
 
     def is_authorized(self):
         req = self._get_request()
-        header = req.headers.get("Authorization", None)
+        header = req.headers.get("Authorization")
         if not header:
             return False
         username_password = base64.b64decode(header.split("Basic ")[1])
