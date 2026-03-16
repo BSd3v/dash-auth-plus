@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 from typing import Optional, Union
 
 from dash import Dash
-from flask import request
 
 from .public_routes import (
     add_public_routes,
@@ -84,6 +83,19 @@ class Auth(ABC):
                 **(auth_protect_layouts_kwargs or {}),
             )
 
+    def _get_request(self):
+        """Return the current request object using a backend-agnostic approach.
+
+        For Dash 4.1+ this delegates to the backend's request adapter.
+        For older Dash versions it falls back to Flask's ``request`` proxy.
+        """
+        if hasattr(self.app, "backend"):
+            return self.app.backend.request_adapter()
+        # Dash < 4.1 – Flask is always the server
+        from flask import request as _flask_request  # noqa: PLC0415
+
+        return _flask_request
+
     def _protect(self):
         """Add a before_request authentication check on all routes.
 
@@ -92,10 +104,15 @@ class Auth(ABC):
             * The request is authorised by `Auth.is_authorised`
         """
 
-        server = self.app.server
+        # Dash 4.1+ exposes a backend-agnostic before_request hook;
+        # for older Dash versions we fall back to the Flask server directly.
+        if hasattr(self.app, "backend"):
+            register_hook = self.app.backend.before_request
+        else:
+            register_hook = self.app.server.before_request
 
-        @server.before_request
         def before_request_auth():
+            req = self._get_request()
             public_routes = get_public_routes(self.app)
             public_callbacks = get_public_callbacks(self.app)
 
@@ -103,8 +120,8 @@ class Auth(ABC):
             # * Check whether the callback is marked as public
             # * Check whether the callback is performed on route change in
             #   which case the path should be checked against the public routes
-            if request.path == "/_dash-update-component":
-                body = request.get_json()
+            if req.path == "/_dash-update-component":
+                body = req.get_json()
 
                 # Check whether the callback is marked as public
                 if body["output"] in public_callbacks:
@@ -149,7 +166,7 @@ class Auth(ABC):
 
             # If the route is not a callback route, check whether the path
             # matches a public route, or whether the request is authorised
-            if public_routes.test(request.path) or self.is_authorized():
+            if public_routes.test(req.path) or self.is_authorized():
                 return None
 
             # When auth_protect_layouts is enabled, avoid redirecting only for registered pages
@@ -158,27 +175,29 @@ class Auth(ABC):
                 # recomputing these structures on every request.
                 page_paths, map_adapter = _get_page_paths_and_adapter()
 
-                # Check if request.path matches any page path
-                if request.path in page_paths:
+                # Check if req.path matches any page path
+                if req.path in page_paths:
                     return None
 
-                # Check if request.path matches any page template
+                # Check if req.path matches any page template
                 if map_adapter is not None:
                     try:
-                        map_adapter.match(request.path)
+                        map_adapter.match(req.path)
                         return None
                     except Exception:
                         pass
 
                 # Also allow Dash internal endpoints
-                if request.path in (
+                if req.path in (
                     "/_dash-layout",
                     "/_dash-dependencies",
-                ) or request.path.startswith("/_dash-component-suites/"):
+                ) or req.path.startswith("/_dash-component-suites/"):
                     return None
 
             # Otherwise, ask the user to log in
             return self.login_request()
+
+        register_hook(before_request_auth)
 
     @abstractmethod
     def is_authorized(self):

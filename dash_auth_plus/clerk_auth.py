@@ -156,6 +156,16 @@ class ClerkAuth(Auth):
         Exception
             Raise an exception if the app.server.secret_key is not defined
         """
+        # ClerkAuth relies on Flask's session/cookie mechanism.  Raise early
+        # if a non-Flask backend is in use so the user gets a clear message.
+        if hasattr(app, "backend") and app.backend.server_type != "flask":
+            raise RuntimeError(
+                "ClerkAuth requires a Flask backend. "
+                f"Detected backend: '{app.backend.server_type}'. "
+                "Pass a Flask server to Dash() or omit the `backend` argument "
+                "to use the default Flask backend."
+            )
+
         super().__init__(
             app,
             public_routes=public_routes,

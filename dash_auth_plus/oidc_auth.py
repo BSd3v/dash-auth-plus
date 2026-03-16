@@ -103,6 +103,18 @@ class OIDCAuth(Auth):
         """
         if idp_selection_route:
             public_routes = [idp_selection_route, *public_routes]
+
+        # OIDCAuth relies on the Flask-specific authlib integration and
+        # Flask's session/cookie mechanism.  Raise early if a non-Flask
+        # backend is in use so the user gets a clear error message.
+        if hasattr(app, "backend") and app.backend.server_type != "flask":
+            raise RuntimeError(
+                "OIDCAuth requires a Flask backend. "
+                f"Detected backend: '{app.backend.server_type}'. "
+                "Pass a Flask server to Dash() or omit the `backend` argument "
+                "to use the default Flask backend."
+            )
+
         super().__init__(
             app,
             public_routes=public_routes,
@@ -222,8 +234,9 @@ class OIDCAuth(Auth):
         if self.force_https_callback:
             kwargs["_scheme"] = "https"
         redirect_uri = url_for("oidc_callback", idp=idp, **kwargs)
-        if request.headers.get("X-Forwarded-Host"):
-            host = request.headers.get("X-Forwarded-Host")
+        req = self._get_request()
+        if req.headers.get("X-Forwarded-Host"):
+            host = req.headers.get("X-Forwarded-Host")
             redirect_uri = redirect_uri.replace(request.host, host, 1)
         return redirect_uri
 
@@ -330,7 +343,8 @@ class OIDCAuth(Auth):
                 if x
             ]
         ).bind("")
-        return map_adapter.test(request.path) or "user" in session
+        req = self._get_request()
+        return map_adapter.test(req.path) or "user" in session
 
 
 def get_oauth(app: dash.Dash = None) -> OAuth:

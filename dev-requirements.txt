@@ -1,4 +1,4 @@
-dash[testing]>=2,<4.1
+dash[testing]>=2
 requests[security]
 flake8
 flask
