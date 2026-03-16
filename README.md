@@ -475,8 +475,8 @@ the function you provide:
 
 ### Restricting layouts
 
-`dash_auth_plus` by default protects routes at the HTTP level: unauthenticated requests are redirected to the login page. However, Dash's routing callback fires client-side and can briefly render private page content before the server-side auth check is enforced.
-To fully prevent this, pass `auth_protect_layouts=True` to any auth constructor (`BasicAuth`, `OIDCAuth`, or `ClerkAuth`):
+`dash_auth_plus` by default protects routes at the HTTP level: an unauthenticated routing callback for a private page is rejected server-side and the user is redirected to the login page.
+Setting `auth_protect_layouts=True` takes a different approach: the routing callback is allowed through for any registered page, but each page's `layout` function is wrapped server-side with `protected()`, so the server returns a placeholder response instead of private content for unauthenticated users. This also provides a single, global place to define access control for all layouts in the application.
 
 ```python
 from dash import html
@@ -594,9 +594,9 @@ if __name__ == "__main__":
 
 ### `auth_protect_layouts` — Layout-Level Protection
 
-By default, `ClerkAuth` (and other auth classes) protect routes at the HTTP request level: an unauthenticated request to a protected route is redirected to the login page. This works well for navigation, but every page in a multi-page Dash app still renders the same layout shell, and Dash's routing callback can load private page content before auth is verified client-side.
+By default, `ClerkAuth` (and other auth classes) protect access at the HTTP request level: an unauthenticated routing callback for a private page is rejected server-side and the user is redirected to the login page.
 
-Setting `auth_protect_layouts=True` adds **layout-level protection**: for every registered page that is not in your `public_routes`, the `layout` function is wrapped with `protected()`. If an unauthenticated user's routing callback fires for a private page, the layout returns a "no access" message (or a custom component) instead of the real content.
+Setting `auth_protect_layouts=True` takes a different approach: the routing callback is **allowed through** for any registered page, but each page's `layout` function is wrapped server-side with `protected()`. The server's response already contains only the placeholder content for unauthenticated users — no private data is ever sent to the client. This also provides a single, global place to define access control for the entire application.
 
 ```python
 auth = ClerkAuth(
@@ -616,10 +616,10 @@ When `page_container` is set to the `id` of your `page_container` element, only 
 
 **Summary of behaviour:**
 
-| Setting | Route-level protection | Layout-level protection |
+| Setting | Unauthenticated routing callback | Unauthenticated direct URL |
 |---|---|---|
-| default (`auth_protect_layouts=False`) | ✅ Redirects unauthenticated requests | ❌ Private layout still renders via routing callback |
-| `auth_protect_layouts=True` | ✅ Redirects unauthenticated requests | ✅ Private layouts return placeholder until authenticated |
+| default (`auth_protect_layouts=False`) | ❌ Server rejects → redirect to login | ❌ Server rejects → redirect to login |
+| `auth_protect_layouts=True` | ✅ Server allows → layout returns placeholder (server-side) | ✅ Server allows → layout returns placeholder (server-side) |
 
 ### Custom Login Page (Embedded Sign-In)
 
