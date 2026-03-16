@@ -16,10 +16,12 @@ from werkzeug.routing import Map, Rule
 import diskcache
 import hashlib
 
-cache = diskcache.Cache("./dash-auth-cache")  # or any directory
+cache = None  # Lazily initialized diskcache.Cache instance
 
 
 def _get_page_paths_and_adapter():
+    global cache
+
     # Lazily import dash and obtain page_registry if available to
     # preserve compatibility with older Dash versions that lack it.
     try:
@@ -29,13 +31,24 @@ def _get_page_paths_and_adapter():
     except ImportError:
         registry = {}
 
+    # Lazily initialize the diskcache.Cache to avoid filesystem side
+    # effects at import time. If initialization fails (e.g., on a
+    # read-only filesystem), caching is simply disabled.
+    if cache is None:
+        try:
+            cache = diskcache.Cache("./dash-auth-cache")  # or any directory
+        except Exception:
+            cache = None
+
     # Build a deterministic signature (hash) of the current registry
     signature = hashlib.sha256(repr(registry).encode()).hexdigest()
 
     cache_key = f"dash_page_registry_{signature}"
 
-    # Try to load from cache
-    result = cache.get(cache_key)
+    # Try to load from cache, if available
+    result = None
+    if cache is not None:
+        result = cache.get(cache_key)
     if result:
         return result["paths"], result["adapter"]
 
@@ -48,8 +61,9 @@ def _get_page_paths_and_adapter():
     if page_templates:
         adapter = Map([Rule(t) for t in page_templates]).bind("")
 
-    # Save to cache atomically
-    cache.set(cache_key, {"paths": page_paths, "adapter": adapter})
+    # Save to cache atomically, if caching is enabled
+    if cache is not None:
+        cache.set(cache_key, {"paths": page_paths, "adapter": adapter})
 
     return page_paths, adapter
 
