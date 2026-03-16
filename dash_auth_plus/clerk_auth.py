@@ -1,13 +1,13 @@
 import logging
 import os
+import re
 import traceback
-from typing import Dict, List, Optional, Union, Callable
+from typing import Any, Dict, List, Optional, Union, Callable
 
 import dash
-from authlib.integrations.flask_client import OAuth
 from dash_auth_plus.auth import Auth, _get_page_paths_and_adapter
-from flask import Response, redirect, session, jsonify
 from dotenv import load_dotenv
+from itsdangerous import BadSignature, URLSafeSerializer
 from urllib.parse import urljoin, quote, unquote, urlparse
 from werkzeug.routing import Rule, Map
 
@@ -80,7 +80,7 @@ class ClerkAuth(Auth):
         ),
         log_signins: bool = False,
         public_routes: Optional[list] = None,
-        logout_page: Union[str, Response] = None,
+        logout_page: Optional[Union[str, Any]] = None,
         secure_session: bool = False,
         user_groups: Optional[Union[UserGroups, Callable[[str], List[str]]]] = None,
         login_user_callback: Callable = None,
@@ -253,7 +253,12 @@ class ClerkAuth(Auth):
             app.server.config["SESSION_COOKIE_SECURE"] = True
             app.server.config["SESSION_COOKIE_HTTPONLY"] = True
 
-        self.oauth = OAuth(app.server)
+        self.session_cookie_name = "dash_auth_plus_session"
+        self.session_serializer = URLSafeSerializer(
+            app.server.secret_key,
+            salt="dash-auth-plus-clerk-session",
+        )
+        self.session_cookie_secure = secure_session
 
         app.server.add_url_rule(
             self.logout_route,
@@ -415,6 +420,7 @@ class ClerkAuth(Auth):
 
     def _redirect_test(self):
         req = self._get_request()
+        session_data = self._get_session(req)
         registered_paths = []
         map_adapter = None
 
@@ -425,11 +431,14 @@ class ClerkAuth(Auth):
             registered_paths, map_adapter = _get_page_paths_and_adapter()
 
         # Extract the intended URL and preserve path + query + fragment
-        parsed_url = (
-            urlparse(req.url)
-            if req.method == "GET"
-            else urlparse(req.headers.get("referer", req.host_url))
-        )
+        request_method = self._request_method(req)
+        source_url = req.url if request_method == "GET" else req.headers.get("referer")
+        if request_method != "GET" and not source_url:
+            logging.debug(
+                "Missing Referer header; using request root for redirect path."
+            )
+            source_url = req.root
+        parsed_url = urlparse(source_url)
         url_path = parsed_url.path
         url_relative = parsed_url.path
         if parsed_url.query:
@@ -452,10 +461,80 @@ class ClerkAuth(Auth):
             # When no pages are registered (e.g. single-page apps), accept the URL
             valid = True
 
-        session["url"] = url_relative if valid else "/"
+        session_data["url"] = url_relative if valid else "/"
         # Avoid redirecting back to the login route itself
-        if "url" in session and urlparse(session["url"]).path == self.login_route:
-            del session["url"]
+        if (
+            "url" in session_data
+            and urlparse(session_data["url"]).path == self.login_route
+        ):
+            del session_data["url"]
+
+    def _get_session(self, req):
+        """Return backend-agnostic session data cached in the request context."""
+        ctx = req.context
+        if isinstance(ctx, dict):
+            cached = ctx.get("_dash_auth_plus_session")
+        else:
+            cached = getattr(ctx, "_dash_auth_plus_session", None)
+        if cached is not None:
+            return cached
+
+        raw = req.cookies.get(self.session_cookie_name)
+        if not raw:
+            session_data = {}
+        else:
+            try:
+                data = self.session_serializer.loads(raw)
+                session_data = data if isinstance(data, dict) else {}
+            except BadSignature:
+                logging.warning(
+                    "Discarding tampered %s cookie due to invalid signature.",
+                    self.session_cookie_name,
+                )
+                session_data = {}
+
+        if isinstance(ctx, dict):
+            ctx["_dash_auth_plus_session"] = session_data
+        else:
+            setattr(ctx, "_dash_auth_plus_session", session_data)
+        return session_data
+
+    def _set_session_cookie(self, response, session_data):
+        """Persist the current session data as a signed auth cookie."""
+        response.set_cookie(
+            self.session_cookie_name,
+            self.session_serializer.dumps(session_data),
+            secure=self.session_cookie_secure,
+            httponly=True,
+            samesite="Lax",
+            path=self.app.config.get("url_base_pathname") or "/",
+        )
+        return response
+
+    def _clear_session_cookie(self, response):
+        response.delete_cookie(
+            self.session_cookie_name,
+            path=self.app.config.get("url_base_pathname") or "/",
+        )
+        return response
+
+    def _request_method(self, req):
+        """Read HTTP method from request adapters with a compatibility fallback."""
+        method = getattr(req, "method", None)
+        if method:
+            return str(method).upper()
+        request_obj = getattr(req, "_request", None)
+        if request_obj is not None and hasattr(request_obj, "method"):
+            return str(request_obj.method).upper()
+        logging.warning(
+            "Could not determine request method from adapter; defaulting to GET."
+        )
+        return "GET"
+
+    def _redirect_response(self, target_url):
+        response = self.app.backend.make_response("", status=302)
+        response.headers["Location"] = target_url
+        return response
 
     def _create_redirect_uri(self):
         """Create the redirect uri based on callback endpoint and idp."""
@@ -467,38 +546,42 @@ class ClerkAuth(Auth):
         redirect_uri = urljoin(
             self.clerk_domain,
             "/sign-in?redirect_url="
-            + quote(req.host_url[:-1] + self.callback_route, safe=""),
+            + quote(req.root.rstrip("/") + self.callback_route, safe=""),
         )
-        if not session.get("url"):
+        session_data = self._get_session(req)
+        if not session_data.get("url"):
             self._redirect_test()
         if req.headers.get("X-Forwarded-Host"):
             host = req.headers.get("X-Forwarded-Host")
-            redirect_uri = redirect_uri.replace(req.host, host, 1)
+            redirect_uri = redirect_uri.replace(urlparse(req.root).netloc, host, 1)
         return redirect_uri
 
     def login_request(self):
         """Start the login process."""
         req = self._get_request()
+        session_data = self._get_session(req)
         resp = self._create_redirect_uri()
-        if req.method == "POST":
-            return jsonify(
+        if self._request_method(req) == "POST":
+            response = self.app.backend.jsonify(
                 {
                     "multi": True,
                     "sideUpdate": {"_clerk_login_url": {"href": resp}},
                 }
             )
-        return redirect(resp)
+            return self._set_session_cookie(response, session_data)
+        return self._set_session_cookie(self._redirect_response(resp), session_data)
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
         req = self._get_request()
+        session_data = self._get_session(req)
         try:
             self.before_logout()
         except Exception as e:
             logging.error(
                 "Error in before_logout hook: %s\n%s", e, traceback.format_exc()
             )
-        if "user" in session:
+        if "user" in session_data:
             try:
                 request_state = self.clerk_client.authenticate_request(
                     req,
@@ -523,8 +606,8 @@ class ClerkAuth(Auth):
                     e,
                     traceback.format_exc(),
                 )
-        session.clear()
-        response = Response(
+        session_data.clear()
+        response = self.app.backend.make_response(
             self.logout_page or f"""
         <div style="display: flex; flex-direction: column;
         gap: 0.75rem; padding: 3rem 5rem;">
@@ -533,11 +616,21 @@ class ClerkAuth(Auth):
         </div>
         {self.clerk_script}
         """,
-            mimetype="text/html",
+            content_type="text/html",
         )
         for cookie in req.cookies:
-            response.delete_cookie(cookie)
-        return response
+            if not re.match(r"^[A-Za-z0-9_.-]+$", cookie):
+                logging.debug(
+                    "Skipping cookie deletion for invalid cookie name: %r", cookie
+                )
+                continue
+            if (
+                cookie == self.session_cookie_name
+                or cookie.startswith("__clerk")
+                or cookie == "__session"
+            ):
+                response.delete_cookie(cookie)
+        return self._clear_session_cookie(response)
 
     def after_logged_in(self, user: Optional[dict], sid):
         """
@@ -549,6 +642,8 @@ class ClerkAuth(Auth):
                     user["params"] = value1
                 return super().after_logged_in(user, idp, token)
         """
+        req = self._get_request()
+        session_data = self._get_session(req)
         if self.login_user_callback:
             return self.login_user_callback(user, "clerk", sid)
         elif user:
@@ -561,26 +656,31 @@ class ClerkAuth(Auth):
                 if user.email_addresses
                 else None
             )
-            session["user"] = {
+            session_data["user"] = {
                 "clerk_user_id": user.id,
                 "userid": user.username,
                 "email": email,
             }
             if callable(self._user_groups):
-                session["user"]["groups"] = self._user_groups(email) + (
-                    session["user"].get("groups") or []
+                session_data["user"]["groups"] = self._user_groups(email) + (
+                    session_data["user"].get("groups") or []
                 )
             elif self._user_groups:
-                session["user"]["groups"] = self._user_groups.get(email, []) + (
-                    session["user"].get("groups") or []
+                session_data["user"]["groups"] = self._user_groups.get(email, []) + (
+                    session_data["user"].get("groups") or []
                 )
             if self.log_signins:
-                logging.info("User %s is logging in.", session["user"].get("email"))
-        if session.get("url"):
-            url = session["url"]
-            del session["url"]
-            return redirect(url)
-        return {"status": "ok", "content": "User logged in successfully."}
+                logging.info(
+                    "User %s is logging in.", session_data["user"].get("email")
+                )
+        if session_data.get("url"):
+            url = session_data["url"]
+            del session_data["url"]
+            return self._set_session_cookie(self._redirect_response(url), session_data)
+        response = self.app.backend.jsonify(
+            {"status": "ok", "content": "User logged in successfully."}
+        )
+        return self._set_session_cookie(response, session_data)
 
     def _get_safe_redirect_url(self, url: str, req=None) -> Optional[str]:
         """
@@ -614,8 +714,9 @@ class ClerkAuth(Auth):
         if parsed.scheme or parsed.netloc:
             try:
                 request_ref = req if req is not None else self._get_request()
-                current_scheme = request_ref.scheme
-                current_host = request_ref.host
+                parsed_current = urlparse(request_ref.url)
+                current_scheme = parsed_current.scheme
+                current_host = parsed_current.netloc
             except RuntimeError:
                 # Outside of a request context; be conservative and reject
                 return None
@@ -645,6 +746,7 @@ class ClerkAuth(Auth):
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
         req = self._get_request()
+        session_data = self._get_session(req)
         if req.args.get("redirect_url"):
             # If redirect_uri is provided, validate and use it only if safe.
             # Allow it to overwrite session["url"] when the current value is
@@ -652,13 +754,13 @@ class ClerkAuth(Auth):
             raw_redirect_url = unquote(req.args.get("redirect_url"))
             safe_url = self._get_safe_redirect_url(raw_redirect_url, req=req)
             if safe_url:
-                current_url = session.get("url")
+                current_url = session_data.get("url")
                 current_path = urlparse(current_url).path if current_url else None
                 if not current_path or current_path in (
                     self.login_route,
                     self.callback_route,
                 ):
-                    session["url"] = safe_url
+                    session_data["url"] = safe_url
 
         request_state = self.clerk_client.authenticate_request(
             req,
@@ -672,14 +774,19 @@ class ClerkAuth(Auth):
             sess = self.clerk_client.sessions.get(session_id=sid)
             user_data = self.clerk_client.users.get(user_id=sess.user_id)
             return self.after_logged_in(user_data, sid)
-        return f"""
+        response = self.app.backend.make_response(
+            f"""
         <div>logging in...</div>
         {self.clerk_script}
-        """
+        """,
+            content_type="text/html",
+        )
+        return self._set_session_cookie(response, session_data)
 
     def is_authorized(self):  # pylint: disable=C0116
         """Check whether the user is authenticated."""
         req = self._get_request()
+        session_data = self._get_session(req)
 
         map_adapter = Map(
             [
@@ -690,7 +797,7 @@ class ClerkAuth(Auth):
         ).bind("")
 
         if (
-            "user" in session
+            "user" in session_data
             or map_adapter.test(req.path)
             or self.clerk_domain in req.url
             or (req.path and req.path.startswith("/.well-known/"))
