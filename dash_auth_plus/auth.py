@@ -16,7 +16,8 @@ from werkzeug.routing import Map, Rule
 import diskcache
 import hashlib
 
-cache = diskcache.Cache('./dash-auth-cache')  # or any directory
+cache = diskcache.Cache("./dash-auth-cache")  # or any directory
+
 
 def _get_page_paths_and_adapter(registry):
     # Lazily import dash and obtain page_registry if available to
@@ -31,12 +32,12 @@ def _get_page_paths_and_adapter(registry):
     # Build a deterministic signature (hash) of the current registry
     signature = hashlib.sha256(repr(registry).encode()).hexdigest()
 
-    cache_key = f'dash_page_registry_{signature}'
+    cache_key = f"dash_page_registry_{signature}"
 
     # Try to load from cache
     result = cache.get(cache_key)
     if result:
-        return result['paths'], result['adapter']
+        return result["paths"], result["adapter"]
 
     # Compute new values
     page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
@@ -46,12 +47,14 @@ def _get_page_paths_and_adapter(registry):
     adapter = None
     if page_templates:
         from werkzeug.routing import Map, Rule
+
         adapter = Map([Rule(t) for t in page_templates]).bind("")
 
     # Save to cache atomically
-    cache.set(cache_key, {'paths': page_paths, 'adapter': adapter})
+    cache.set(cache_key, {"paths": page_paths, "adapter": adapter})
 
     return page_paths, adapter
+
 
 #
 # def _get_page_paths_and_adapter():
@@ -244,9 +247,10 @@ class Auth(ABC):
                         pass
 
                 # Also allow Dash internal endpoints
-                if request.path in ("/_dash-layout", "/_dash-dependencies") or request.path.startswith(
-                    "/_dash-component-suites/"
-                ):
+                if request.path in (
+                    "/_dash-layout",
+                    "/_dash-dependencies",
+                ) or request.path.startswith("/_dash-component-suites/"):
                     return None
 
             # Otherwise, ask the user to log in

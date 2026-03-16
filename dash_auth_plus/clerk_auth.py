@@ -419,7 +419,9 @@ class ClerkAuth(Auth):
 
         app_config = getattr(getattr(self, "app", None), "config", {})
         if "pages_folder" in app_config:
-            page_registry = getattr(getattr(self, "app", None), "page_registry", dash.page_registry)
+            page_registry = getattr(
+                getattr(self, "app", None), "page_registry", dash.page_registry
+            )
             for page in page_registry.values():
                 if "path" in page:
                     registered_paths.append(page["path"])
