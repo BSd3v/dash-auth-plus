@@ -212,10 +212,8 @@ class Auth(ABC):
                         pass
 
                 # Also allow Dash internal endpoints
-                if request.path in (
-                    "/_dash-layout",
-                    "/_dash-dependencies",
-                    "/_dash-component-suites",
+                if request.path in ("/_dash-layout", "/_dash-dependencies") or request.path.startswith(
+                    "/_dash-component-suites/"
                 ):
                     return None
 
