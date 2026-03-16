@@ -1,9 +1,11 @@
 from __future__ import absolute_import
 from abc import ABC, abstractmethod
+import logging
+import os
 from typing import Optional, Union
 
 from dash import Dash
-from flask import request
+from itsdangerous import BadSignature, URLSafeSerializer
 
 from .public_routes import (
     add_public_routes,
@@ -84,6 +86,133 @@ class Auth(ABC):
                 **(auth_protect_layouts_kwargs or {}),
             )
 
+    def _get_request(self):
+        """Return the current request object using a backend-agnostic approach.
+
+        This delegates to Dash's backend request adapter.
+        """
+        return self.app.backend.request_adapter()
+
+    @property
+    def _session_cookie_name(self):
+        return "dash_auth_plus_session"
+
+    def _get_server_config(self):
+        return getattr(self.app.server, "config", None)
+
+    def _get_auth_settings(self):
+        settings = getattr(self.app, "_dash_auth_plus_settings", None)
+        if settings is None:
+            settings = {}
+            setattr(self.app, "_dash_auth_plus_settings", settings)
+        return settings
+
+    def _get_config_value(self, key, default=None):
+        settings = self._get_auth_settings()
+        if key in settings:
+            return settings[key]
+        if key in self.app.config:
+            return self.app.config.get(key)
+        server_config = self._get_server_config()
+        if hasattr(server_config, "get"):
+            return server_config.get(key, default)
+        return default
+
+    def _set_config_value(self, key, value):
+        self._get_auth_settings()[key] = value
+        server_config = self._get_server_config()
+        if server_config is not None:
+            try:
+                server_config[key] = value
+            except Exception:
+                pass
+
+    def _get_secret_key(self):
+        secret_key = (
+            self._get_auth_settings().get("SECRET_KEY")
+            or getattr(self.app.server, "secret_key", None)
+            or os.environ.get("DASH_AUTH_PLUS_SECRET_KEY")
+        )
+        return secret_key
+
+    def _set_secret_key(self, secret_key):
+        self._get_auth_settings()["SECRET_KEY"] = secret_key
+        try:
+            self.app.server.secret_key = secret_key
+        except Exception:
+            pass
+
+    @property
+    def _session_cookie_secure(self):
+        return bool(self._get_config_value("SESSION_COOKIE_SECURE", False))
+
+    def _session_cookie_path(self):
+        return self.app.config.get("url_base_pathname") or "/"
+
+    def _get_session_serializer(self):
+        secret_key = self._get_secret_key()
+        if secret_key is None:
+            raise RuntimeError("Session is not available. Have you set a secret key?")
+        return URLSafeSerializer(secret_key, salt="dash-auth-plus-session")
+
+    def _get_session(self, req=None):
+        """Get backend-agnostic session data from a signed cookie."""
+        request_ref = req if req is not None else self._get_request()
+        ctx = request_ref.context
+
+        if isinstance(ctx, dict):
+            cached = ctx.get("_dash_auth_plus_session")
+        else:
+            cached = getattr(ctx, "_dash_auth_plus_session", None)
+        if cached is not None:
+            return cached
+
+        serializer = self._get_session_serializer()
+        raw = request_ref.cookies.get(self._session_cookie_name)
+        if not raw:
+            session_data = {}
+        else:
+            try:
+                loaded = serializer.loads(raw)
+                session_data = loaded if isinstance(loaded, dict) else {}
+            except BadSignature:
+                logging.warning(
+                    "Discarding tampered %s cookie due to invalid signature.",
+                    self._session_cookie_name,
+                )
+                session_data = {}
+
+        if isinstance(ctx, dict):
+            ctx["_dash_auth_plus_session"] = session_data
+        else:
+            setattr(ctx, "_dash_auth_plus_session", session_data)
+        return session_data
+
+    def _save_session(self, response, session_data):
+        """Persist backend-agnostic session data in a signed cookie."""
+        serializer = self._get_session_serializer()
+        response.set_cookie(
+            self._session_cookie_name,
+            serializer.dumps(session_data),
+            secure=self._session_cookie_secure,
+            httponly=True,
+            samesite="Lax",
+            path=self._session_cookie_path(),
+        )
+        return response
+
+    def _clear_session(self, response):
+        response.delete_cookie(
+            self._session_cookie_name,
+            path=self._session_cookie_path(),
+        )
+        return response
+
+    def _redirect_response(self, target_url):
+        response = self.app.backend.make_response("", status=302)
+        response.headers["Location"] = target_url
+        return response
+
     def _protect(self):
         """Add a before_request authentication check on all routes.
 
@@ -92,10 +221,10 @@ class Auth(ABC):
             * The request is authorised by `Auth.is_authorised`
         """
 
-        server = self.app.server
+        register_hook = self.app.backend.before_request
 
-        @server.before_request
         def before_request_auth():
+            req = self._get_request()
             public_routes = get_public_routes(self.app)
             public_callbacks = get_public_callbacks(self.app)
 
@@ -103,8 +232,8 @@ class Auth(ABC):
             # * Check whether the callback is marked as public
             # * Check whether the callback is performed on route change in
             #   which case the path should be checked against the public routes
-            if request.path == "/_dash-update-component":
-                body = request.get_json()
+            if req.path == "/_dash-update-component":
+                body = req.get_json()
 
                 # Check whether the callback is marked as public
                 if body["output"] in public_callbacks:
@@ -149,7 +278,7 @@ class Auth(ABC):
 
             # If the route is not a callback route, check whether the path
             # matches a public route, or whether the request is authorised
-            if public_routes.test(request.path) or self.is_authorized():
+            if public_routes.test(req.path) or self.is_authorized():
                 return None
 
             # When auth_protect_layouts is enabled, avoid redirecting only for registered pages
@@ -158,27 +287,29 @@ class Auth(ABC):
                 # recomputing these structures on every request.
                 page_paths, map_adapter = _get_page_paths_and_adapter()
 
-                # Check if request.path matches any page path
-                if request.path in page_paths:
+                # Check if req.path matches any page path
+                if req.path in page_paths:
                     return None
 
-                # Check if request.path matches any page template
+                # Check if req.path matches any page template
                 if map_adapter is not None:
                     try:
-                        map_adapter.match(request.path)
+                        map_adapter.match(req.path)
                         return None
                     except Exception:
                         pass
 
                 # Also allow Dash internal endpoints
-                if request.path in (
+                if req.path in (
                     "/_dash-layout",
                     "/_dash-dependencies",
-                ) or request.path.startswith("/_dash-component-suites/"):
+                ) or req.path.startswith("/_dash-component-suites/"):
                     return None
 
             # Otherwise, ask the user to log in
             return self.login_request()
+
+        register_hook(before_request_auth)
 
     @abstractmethod
     def is_authorized(self):

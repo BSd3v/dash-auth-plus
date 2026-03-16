@@ -1,13 +1,13 @@
 import logging
 import os
 import re
+from urllib.parse import urlparse, urlunparse
 from typing import Dict, List, Optional, Union, Callable, TYPE_CHECKING
 
 import dash
 from authlib.integrations.base_client import OAuthError
 from authlib.integrations.flask_client import OAuth
 from dash_auth_plus.auth import Auth
-from flask import Response, redirect, request, session, url_for
 from werkzeug.routing import Map, Rule
 
 if TYPE_CHECKING:
@@ -30,7 +30,7 @@ class OIDCAuth(Auth):
         idp_selection_route: str = None,
         log_signins: bool = False,
         public_routes: Optional[list] = None,
-        logout_page: Union[str, Response] = None,
+        logout_page: Optional[Union[str, object]] = None,
         secure_session: bool = False,
         user_groups: Optional[Union[UserGroups, Callable[[str], List[str]]]] = None,
         login_user_callback: Callable = None,
@@ -103,6 +103,18 @@ class OIDCAuth(Auth):
         """
         if idp_selection_route:
             public_routes = [idp_selection_route, *public_routes]
+
+        # OIDCAuth relies on the Flask-specific authlib integration and
+        # Flask's session/cookie mechanism.  Raise early if a non-Flask
+        # backend is in use so the user gets a clear error message.
+        if hasattr(app, "backend") and app.backend.server_type != "flask":
+            raise RuntimeError(
+                "OIDCAuth requires a Flask backend. "
+                f"Detected backend: '{app.backend.server_type}'. "
+                "Pass a Flask server to Dash() or omit the `backend` argument "
+                "to use the default Flask backend."
+            )
+
         super().__init__(
             app,
             public_routes=public_routes,
@@ -128,9 +140,9 @@ class OIDCAuth(Auth):
         self.login_user_callback = login_user_callback
 
         if secret_key is not None:
-            app.server.secret_key = secret_key
+            self._set_secret_key(secret_key)
 
-        if app.server.secret_key is None:
+        if self._get_secret_key() is None:
             raise RuntimeError("""
                 app.server.secret_key is missing.
                 Generate a secret key in your Python session
@@ -147,8 +159,8 @@ class OIDCAuth(Auth):
                 """)
 
         if secure_session:
-            app.server.config["SESSION_COOKIE_SECURE"] = True
-            app.server.config["SESSION_COOKIE_HTTPONLY"] = True
+            self._set_config_value("SESSION_COOKIE_SECURE", True)
+            self._set_config_value("SESSION_COOKIE_HTTPONLY", True)
 
         self.oauth = OAuth(app.server)
 
@@ -218,13 +230,17 @@ class OIDCAuth(Auth):
 
     def _create_redirect_uri(self, idp: str):
         """Create the redirect uri based on callback endpoint and idp."""
-        kwargs = {"_external": True}
+        req = self._get_request()
+        callback_path = self.callback_route.replace("<idp>", idp)
+        root = req.root or "/"
+        redirect_uri = root.rstrip("/") + callback_path
         if self.force_https_callback:
-            kwargs["_scheme"] = "https"
-        redirect_uri = url_for("oidc_callback", idp=idp, **kwargs)
-        if request.headers.get("X-Forwarded-Host"):
-            host = request.headers.get("X-Forwarded-Host")
-            redirect_uri = redirect_uri.replace(request.host, host, 1)
+            parsed = urlparse(redirect_uri)
+            redirect_uri = urlunparse(parsed._replace(scheme="https"))
+        if req.headers.get("X-Forwarded-Host"):
+            host = req.headers.get("X-Forwarded-Host")
+            parsed = urlparse(redirect_uri)
+            redirect_uri = urlunparse(parsed._replace(netloc=host))
         return redirect_uri
 
     def login_request(self, idp: str = None):
@@ -235,7 +251,7 @@ class OIDCAuth(Auth):
         if idp not in self.oauth._registry:
             # If a `idp_selection_route` was provided, redirect to it.
             if self.idp_selection_route:
-                return redirect(self.idp_selection_route)
+                return self._redirect_response(self.idp_selection_route)
             # If only one provider is registered, we don't need to
             # ask the user to pick one, just use the one
             if len(self.oauth._registry) == 1:
@@ -256,7 +272,8 @@ class OIDCAuth(Auth):
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
-        session.clear()
+        session_data = self._get_session()
+        session_data.clear()
         base_url = self.app.config.get("url_base_pathname") or "/"
         page = self.logout_page or f"""
         <div style="display: flex; flex-direction: column;
@@ -265,7 +282,11 @@ class OIDCAuth(Auth):
             <div><a href="{base_url}">Go back</a></div>
         </div>
         """
-        return page
+        if isinstance(page, str):
+            response = self.app.backend.make_response(page, content_type="text/html")
+        else:
+            response = page
+        return self._clear_session(response)
 
     def callback(self, idp: str):  # pylint: disable=C0116
         """Handle the OIDC dance and post-login actions."""
@@ -297,23 +318,28 @@ class OIDCAuth(Auth):
         if self.login_user_callback:
             return self.login_user_callback(user, idp)
         elif user:
-            session["user"] = user
-            session["idp"] = idp
+            session_data = self._get_session()
+            session_data["user"] = user
+            session_data["idp"] = idp
             if callable(self._user_groups):
-                session["user"]["groups"] = self._user_groups(user.get("email")) + (
-                    session["user"].get("groups") or []
-                )
+                session_data["user"]["groups"] = self._user_groups(
+                    user.get("email")
+                ) + (session_data["user"].get("groups") or [])
             elif self._user_groups:
-                session["user"]["groups"] = self._user_groups.get(
+                session_data["user"]["groups"] = self._user_groups.get(
                     user.get("email"), []
-                ) + (session["user"].get("groups") or [])
+                ) + (session_data["user"].get("groups") or [])
             oauth_scope = self.get_oauth_client(idp).client_kwargs["scope"]
             if "offline_access" in oauth_scope:
-                session["refresh_token"] = token.get("refresh_token")
+                session_data["refresh_token"] = token.get("refresh_token")
             if self.log_signins:
                 logging.info("User %s is logging in.", user.get("email"))
-
-        return redirect(self.app.config.get("url_base_pathname") or "/")
+        response = self._redirect_response(
+            self.app.config.get("url_base_pathname") or "/"
+        )
+        if user:
+            return self._save_session(response, session_data)
+        return response
 
     def is_authorized(self):  # pylint: disable=C0116
         """Check whether ther user is authenticated."""
@@ -330,7 +356,13 @@ class OIDCAuth(Auth):
                 if x
             ]
         ).bind("")
-        return map_adapter.test(request.path) or "user" in session
+        req = self._get_request()
+        try:
+            session_data = self._get_session(req)
+        except RuntimeError:
+            logging.warning("Session is not available. Have you set a secret key?")
+            session_data = {}
+        return map_adapter.test(req.path) or "user" in session_data
 
 
 def get_oauth(app: dash.Dash = None) -> OAuth:
