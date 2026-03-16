@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Union, Callable
 
 import dash
 from authlib.integrations.flask_client import OAuth
-from dash_auth_plus.auth import Auth
+from dash_auth_plus.auth import Auth, _get_page_paths_and_adapter
 from flask import Response, redirect, request, session, jsonify
 from dotenv import load_dotenv
 from urllib.parse import urljoin, quote, unquote, urlparse
@@ -415,18 +415,13 @@ class ClerkAuth(Auth):
 
     def _redirect_test(self):
         registered_paths = []
-        registered_templates = []
+        map_adapter = None
 
         app_config = getattr(getattr(self, "app", None), "config", {})
         if "pages_folder" in app_config:
-            page_registry = getattr(
-                getattr(self, "app", None), "page_registry", dash.page_registry
-            )
-            for page in page_registry.values():
-                if "path" in page:
-                    registered_paths.append(page["path"])
-                if "path_template" in page and page["path_template"]:
-                    registered_templates.append(page["path_template"])
+            # Use the cached helper to avoid rebuilding paths/adapters on every
+            # request and to safely handle Dash versions without page_registry.
+            registered_paths, map_adapter = _get_page_paths_and_adapter()
 
         # Extract the intended URL and preserve path + query + fragment
         parsed_url = (
@@ -442,12 +437,11 @@ class ClerkAuth(Auth):
             url_relative += "#" + parsed_url.fragment
 
         # Determine validity of the path against registered Dash Pages, if any
-        if registered_paths or registered_templates:
+        if registered_paths or map_adapter is not None:
             # Check static paths
             valid = url_path in registered_paths
-            # Check templates
-            if not valid and registered_templates:
-                map_adapter = Map([Rule(t) for t in registered_templates]).bind("")
+            # Check templates using the pre-built cached adapter
+            if not valid and map_adapter is not None:
                 try:
                     map_adapter.match(url_path)
                     valid = True
