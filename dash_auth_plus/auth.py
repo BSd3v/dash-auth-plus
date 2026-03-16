@@ -13,7 +13,6 @@ from .public_routes import (
 from .group_protection import protect_layouts
 from werkzeug.routing import Map, Rule
 
-
 # Cached data derived from Dash's page_registry to avoid recomputing
 # these structures on every request when auth_protect_layouts is enabled.
 _cached_page_paths = None
@@ -34,11 +33,17 @@ def _get_page_paths_and_adapter():
     (e.g. in tests, hot reload, or dynamic registration) will cause
     the cached data to be refreshed.
     """
-    global (
-        _cached_page_paths,
-        _cached_page_templates_adapter,
-        _cached_page_registry_signature,
-    )
+
+    # Lazily import dash and obtain page_registry if available to
+    # preserve compatibility with older Dash versions that lack it.
+    try:
+        import dash
+
+        registry = getattr(dash, "page_registry", {})
+    except ImportError:
+        registry = {}
+
+    global _cached_page_paths, _cached_page_templates_adapter, _cached_page_registry_signature
 
     # Build a deterministic signature of the current page_registry
     # based on the route name, path, and path_template. This is
@@ -50,7 +55,7 @@ def _get_page_paths_and_adapter():
                 pg.get("path"),
                 pg.get("path_template"),
             )
-            for name, pg in page_registry.items()
+            for name, pg in registry.items()
         )
     )
 
@@ -61,20 +66,10 @@ def _get_page_paths_and_adapter():
     ):
         return _cached_page_paths, _cached_page_templates_adapter
 
-    # Lazily import dash and obtain page_registry if available to
-    # preserve compatibility with older Dash versions that lack it.
-    try:
-        import dash
-        registry = getattr(dash, "page_registry", {})
-    except ImportError:
-        registry = {}
-
     # For Dash 2.x/3.x, use page_registry to build the paths and templates.
     page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
     page_templates = [
-        pg.get("path_template")
-        for pg in registry.values()
-        if pg.get("path_template")
+        pg.get("path_template") for pg in registry.values() if pg.get("path_template")
     ]
 
     # Cache the simple path list and the signature.
