@@ -417,13 +417,14 @@ class ClerkAuth(Auth):
         registered_paths = []
         registered_templates = []
 
-        if "pages_folder" in dash.get_app().config:
-            for page in dash.page_registry.values():
+        app_config = getattr(getattr(self, "app", None), "config", {})
+        if "pages_folder" in app_config:
+            page_registry = getattr(getattr(self, "app", None), "page_registry", dash.page_registry)
+            for page in page_registry.values():
                 if "path" in page:
                     registered_paths.append(page["path"])
-                if "path_template" in page:
-                    if page["path_template"]:
-                        registered_templates.append(page["path_template"])
+                if "path_template" in page and page["path_template"]:
+                    registered_templates.append(page["path_template"])
 
         # Extract the intended URL and preserve path + query + fragment
         parsed_url = (
