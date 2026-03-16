@@ -18,6 +18,9 @@ from werkzeug.routing import Map, Rule
 # these structures on every request when auth_protect_layouts is enabled.
 _cached_page_paths = None
 _cached_page_templates_adapter = None
+# Signature of the page_registry contents (paths/templates) used to
+# detect when the registry has changed and the cache must be rebuilt.
+_cached_page_registry_signature = None
 
 
 def _get_page_paths_and_adapter():
@@ -25,11 +28,37 @@ def _get_page_paths_and_adapter():
     Lazily compute and cache page paths and the compiled MapAdapter
     used to match path templates. This avoids rebuilding these
     structures on every request in the before_request handler.
-    """
-    global _cached_page_paths, _cached_page_templates_adapter
 
-    # If already cached, reuse.
-    if _cached_page_paths is not None:
+    The cache is keyed by a simple, deterministic signature derived
+    from dash.page_registry so that changes to registered pages
+    (e.g. in tests, hot reload, or dynamic registration) will cause
+    the cached data to be refreshed.
+    """
+    global (
+        _cached_page_paths,
+        _cached_page_templates_adapter,
+        _cached_page_registry_signature,
+    )
+
+    # Build a deterministic signature of the current page_registry
+    # based on the route name, path, and path_template. This is
+    # lightweight and sufficient to detect changes relevant to auth.
+    current_signature = tuple(
+        sorted(
+            (
+                name,
+                pg.get("path"),
+                pg.get("path_template"),
+            )
+            for name, pg in page_registry.items()
+        )
+    )
+
+    # If already cached and the registry hasn't changed, reuse.
+    if (
+        _cached_page_paths is not None
+        and _cached_page_registry_signature == current_signature
+    ):
         return _cached_page_paths, _cached_page_templates_adapter
 
     # Lazily import dash and obtain page_registry if available to
@@ -48,8 +77,9 @@ def _get_page_paths_and_adapter():
         if pg.get("path_template")
     ]
 
-    # Cache the simple path list.
+    # Cache the simple path list and the signature.
     _cached_page_paths = page_paths
+    _cached_page_registry_signature = current_signature
 
     # Build and cache the MapAdapter only if templates exist.
     if page_templates:
