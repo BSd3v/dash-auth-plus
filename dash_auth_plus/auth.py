@@ -1,8 +1,10 @@
 from __future__ import absolute_import
 from abc import ABC, abstractmethod
+import logging
 from typing import Optional, Union
 
 from dash import Dash
+from itsdangerous import BadSignature, URLSafeSerializer
 
 from .public_routes import (
     add_public_routes,
@@ -89,6 +91,81 @@ class Auth(ABC):
         This delegates to Dash's backend request adapter.
         """
         return self.app.backend.request_adapter()
+
+    @property
+    def _session_cookie_name(self):
+        return "dash_auth_plus_session"
+
+    @property
+    def _session_cookie_secure(self):
+        return bool(self.app.server.config.get("SESSION_COOKIE_SECURE", False))
+
+    def _session_cookie_path(self):
+        return self.app.config.get("url_base_pathname") or "/"
+
+    def _get_session_serializer(self):
+        secret_key = getattr(self.app.server, "secret_key", None)
+        if secret_key is None:
+            raise RuntimeError("Session is not available. Have you set a secret key?")
+        return URLSafeSerializer(secret_key, salt="dash-auth-plus-session")
+
+    def _get_session(self, req=None):
+        """Get backend-agnostic session data from a signed cookie."""
+        request_ref = req if req is not None else self._get_request()
+        ctx = request_ref.context
+
+        if isinstance(ctx, dict):
+            cached = ctx.get("_dash_auth_plus_session")
+        else:
+            cached = getattr(ctx, "_dash_auth_plus_session", None)
+        if cached is not None:
+            return cached
+
+        serializer = self._get_session_serializer()
+        raw = request_ref.cookies.get(self._session_cookie_name)
+        if not raw:
+            session_data = {}
+        else:
+            try:
+                loaded = serializer.loads(raw)
+                session_data = loaded if isinstance(loaded, dict) else {}
+            except BadSignature:
+                logging.warning(
+                    "Discarding tampered %s cookie due to invalid signature.",
+                    self._session_cookie_name,
+                )
+                session_data = {}
+
+        if isinstance(ctx, dict):
+            ctx["_dash_auth_plus_session"] = session_data
+        else:
+            setattr(ctx, "_dash_auth_plus_session", session_data)
+        return session_data
+
+    def _save_session(self, response, session_data):
+        """Persist backend-agnostic session data in a signed cookie."""
+        serializer = self._get_session_serializer()
+        response.set_cookie(
+            self._session_cookie_name,
+            serializer.dumps(session_data),
+            secure=self._session_cookie_secure,
+            httponly=True,
+            samesite="Lax",
+            path=self._session_cookie_path(),
+        )
+        return response
+
+    def _clear_session(self, response):
+        response.delete_cookie(
+            self._session_cookie_name,
+            path=self._session_cookie_path(),
+        )
+        return response
+
+    def _redirect_response(self, target_url):
+        response = self.app.backend.make_response("", status=302)
+        response.headers["Location"] = target_url
+        return response
 
     def _protect(self):
         """Add a before_request authentication check on all routes.

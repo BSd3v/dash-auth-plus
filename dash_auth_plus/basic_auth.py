@@ -1,7 +1,6 @@
 import base64
 import logging
 from typing import Dict, List, Optional, Union, Callable
-import flask
 from dash import Dash
 
 from .auth import Auth
@@ -106,20 +105,20 @@ class BasicAuth(Auth):
             authorized = self._users.get(username) == password
         if authorized:
             try:
-                flask.session["user"] = {"email": username, "groups": []}
+                session_data = self._get_session(req)
+                session_data["user"] = {"email": username, "groups": []}
                 if callable(self._user_groups):
-                    flask.session["user"]["groups"] = self._user_groups(username)
+                    session_data["user"]["groups"] = self._user_groups(username)
                 elif self._user_groups:
-                    flask.session["user"]["groups"] = self._user_groups.get(
-                        username, []
-                    )
+                    session_data["user"]["groups"] = self._user_groups.get(username, [])
             except RuntimeError:
                 logging.warning("Session is not available. Have you set a secret key?")
         return authorized
 
     def login_request(self):
-        return flask.Response(
+        response = self.app.backend.make_response(
             "Login Required",
-            headers={"WWW-Authenticate": 'Basic realm="User Visible Realm"'},
             status=401,
         )
+        response.headers["WWW-Authenticate"] = 'Basic realm="User Visible Realm"'
+        return response
