@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Union, Callable
 import dash
 from authlib.integrations.flask_client import OAuth
 from dash_auth_plus.auth import Auth, _get_page_paths_and_adapter
-from flask import Response, redirect, request, session, jsonify
+from flask import Response, redirect, session, jsonify
 from dotenv import load_dotenv
 from urllib.parse import urljoin, quote, unquote, urlparse
 from werkzeug.routing import Rule, Map
@@ -156,16 +156,6 @@ class ClerkAuth(Auth):
         Exception
             Raise an exception if the app.server.secret_key is not defined
         """
-        # ClerkAuth relies on Flask's session/cookie mechanism.  Raise early
-        # if a non-Flask backend is in use so the user gets a clear message.
-        if hasattr(app, "backend") and app.backend.server_type != "flask":
-            raise RuntimeError(
-                "ClerkAuth requires a Flask backend. "
-                f"Detected backend: '{app.backend.server_type}'. "
-                "Pass a Flask server to Dash() or omit the `backend` argument "
-                "to use the default Flask backend."
-            )
-
         super().__init__(
             app,
             public_routes=public_routes,
@@ -424,6 +414,7 @@ class ClerkAuth(Auth):
             )
 
     def _redirect_test(self):
+        req = self._get_request()
         registered_paths = []
         map_adapter = None
 
@@ -435,9 +426,9 @@ class ClerkAuth(Auth):
 
         # Extract the intended URL and preserve path + query + fragment
         parsed_url = (
-            urlparse(request.url)
-            if request.method == "GET"
-            else urlparse(request.headers.get("referer", request.host_url))
+            urlparse(req.url)
+            if req.method == "GET"
+            else urlparse(req.headers.get("referer", req.host_url))
         )
         url_path = parsed_url.path
         url_relative = parsed_url.path
@@ -468,6 +459,7 @@ class ClerkAuth(Auth):
 
     def _create_redirect_uri(self):
         """Create the redirect uri based on callback endpoint and idp."""
+        req = self._get_request()
         kwargs = {"_external": True}
         if self.force_https_callback:
             kwargs["_scheme"] = "https"
@@ -475,19 +467,20 @@ class ClerkAuth(Auth):
         redirect_uri = urljoin(
             self.clerk_domain,
             "/sign-in?redirect_url="
-            + quote(request.host_url[:-1] + self.callback_route, safe=""),
+            + quote(req.host_url[:-1] + self.callback_route, safe=""),
         )
         if not session.get("url"):
             self._redirect_test()
-        if request.headers.get("X-Forwarded-Host"):
-            host = request.headers.get("X-Forwarded-Host")
-            redirect_uri = redirect_uri.replace(request.host, host, 1)
+        if req.headers.get("X-Forwarded-Host"):
+            host = req.headers.get("X-Forwarded-Host")
+            redirect_uri = redirect_uri.replace(req.host, host, 1)
         return redirect_uri
 
     def login_request(self):
         """Start the login process."""
+        req = self._get_request()
         resp = self._create_redirect_uri()
-        if request.method == "POST":
+        if req.method == "POST":
             return jsonify(
                 {
                     "multi": True,
@@ -498,6 +491,7 @@ class ClerkAuth(Auth):
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
+        req = self._get_request()
         try:
             self.before_logout()
         except Exception as e:
@@ -507,7 +501,7 @@ class ClerkAuth(Auth):
         if "user" in session:
             try:
                 request_state = self.clerk_client.authenticate_request(
-                    request,
+                    req,
                     self.authenticate_request_options(
                         authorized_parties=self.allowed_parties,
                     ),
@@ -541,7 +535,7 @@ class ClerkAuth(Auth):
         """,
             mimetype="text/html",
         )
-        for cookie in request.cookies:
+        for cookie in req.cookies:
             response.delete_cookie(cookie)
         return response
 
@@ -588,7 +582,7 @@ class ClerkAuth(Auth):
             return redirect(url)
         return {"status": "ok", "content": "User logged in successfully."}
 
-    def _get_safe_redirect_url(self, url: str) -> Optional[str]:
+    def _get_safe_redirect_url(self, url: str, req=None) -> Optional[str]:
         """
         Validate a user-supplied redirect URL and return a safe relative URL or None.
 
@@ -600,6 +594,9 @@ class ClerkAuth(Auth):
 
         Any URL that does not meet these criteria is rejected to prevent
         open-redirects to external domains.
+
+        :param req: Optional request object override. If omitted, the current
+            backend request adapter is used.
         """
         if not url:
             return None
@@ -616,12 +613,12 @@ class ClerkAuth(Auth):
         # If scheme or netloc are present, only allow same-origin absolute URLs
         if parsed.scheme or parsed.netloc:
             try:
-                current_scheme = request.scheme
-                current_host = request.host
+                request_ref = req if req is not None else self._get_request()
+                current_scheme = request_ref.scheme
+                current_host = request_ref.host
             except RuntimeError:
                 # Outside of a request context; be conservative and reject
                 return None
-
             # Reject if the absolute URL is not same-origin
             if parsed.scheme != current_scheme or parsed.netloc != current_host:
                 return None
@@ -647,12 +644,13 @@ class ClerkAuth(Auth):
 
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
-        if request.args.get("redirect_url"):
+        req = self._get_request()
+        if req.args.get("redirect_url"):
             # If redirect_uri is provided, validate and use it only if safe.
             # Allow it to overwrite session["url"] when the current value is
             # unset or points to the login/callback route, to avoid redirect loops.
-            raw_redirect_url = unquote(request.args.get("redirect_url"))
-            safe_url = self._get_safe_redirect_url(raw_redirect_url)
+            raw_redirect_url = unquote(req.args.get("redirect_url"))
+            safe_url = self._get_safe_redirect_url(raw_redirect_url, req=req)
             if safe_url:
                 current_url = session.get("url")
                 current_path = urlparse(current_url).path if current_url else None
@@ -663,7 +661,7 @@ class ClerkAuth(Auth):
                     session["url"] = safe_url
 
         request_state = self.clerk_client.authenticate_request(
-            request,
+            req,
             self.authenticate_request_options(
                 authorized_parties=self.allowed_parties,
             ),
@@ -681,6 +679,7 @@ class ClerkAuth(Auth):
 
     def is_authorized(self):  # pylint: disable=C0116
         """Check whether the user is authenticated."""
+        req = self._get_request()
 
         map_adapter = Map(
             [
@@ -692,16 +691,17 @@ class ClerkAuth(Auth):
 
         if (
             "user" in session
-            or map_adapter.test(request.path)
-            or self.clerk_domain in request.url
-            or (request.path and request.path.startswith("/.well-known/"))
+            or map_adapter.test(req.path)
+            or self.clerk_domain in req.url
+            or (req.path and req.path.startswith("/.well-known/"))
         ):
             return True
         return False
 
     def get_user_data(self):
+        req = self._get_request()
         request_state = self.clerk_client.authenticate_request(
-            request,
+            req,
             self.authenticate_request_options(
                 authorized_parties=self.allowed_parties,
             ),

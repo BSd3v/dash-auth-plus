@@ -161,10 +161,11 @@ def safe_redirect():
 
     ``object.__new__`` bypasses ``ClerkAuth.__init__``, so no Dash app or Clerk
     credentials are needed.  The method only uses ``self`` for dispatch and
-    reads ``flask.request`` when the supplied URL is absolute.
+    reads ``flask.request`` via an explicit request_obj argument when the
+    supplied URL is absolute.
     """
     instance = object.__new__(ClerkAuth)
-    return instance._get_safe_redirect_url
+    return lambda url: instance._get_safe_redirect_url(url, req=flask.request)
 
 
 @pytest.fixture
