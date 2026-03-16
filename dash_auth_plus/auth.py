@@ -19,7 +19,7 @@ import hashlib
 cache = diskcache.Cache("./dash-auth-cache")  # or any directory
 
 
-def _get_page_paths_and_adapter(registry):
+def _get_page_paths_and_adapter():
     # Lazily import dash and obtain page_registry if available to
     # preserve compatibility with older Dash versions that lack it.
     try:
