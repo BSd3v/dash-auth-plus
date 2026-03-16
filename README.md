@@ -475,38 +475,67 @@ the function you provide:
 
 ### Restricting layouts
 
-`dash_auth` by default will cater your page layouts that are in your public routes or where the user is authenticated.
-However, it is possible to lock down layouts by passing these additional arguments to `OIDCAuth` or `BasicAuth` methods:
+`dash_auth_plus` by default protects routes at the HTTP level: unauthenticated requests are redirected to the login page. However, Dash's routing callback fires client-side and can briefly render private page content before the server-side auth check is enforced.
+To fully prevent this, pass `auth_protect_layouts=True` to any auth constructor (`BasicAuth`, `OIDCAuth`, or `ClerkAuth`):
 
 ```python
-auth_protect_layouts=True,
-auth_protect_layouts_kwargs=dict(missing_permissions_output=html.Div('you cant get me')),
-page_container='_pages_content'
+from dash import html
+from dash_auth_plus import BasicAuth
+
+BasicAuth(
+    app,
+    USER_PWD,
+    public_routes=['/'],
+    auth_protect_layouts=True,
+    auth_protect_layouts_kwargs=dict(missing_permissions_output=html.Div('You do not have access to this page.')),
+    page_container='_pages_content',
+)
 ```
 
-Passing `auth_protect_layouts` tells the app to invoke the `protected` with the `public_routes` passed to 
-not protect the layouts of public routes.
-Passing `auth_protect_layouts_kwargs` is the same are the additional `kwargs` passed to the function
-By default, the app will check any non-public callback that has the `pathname` as an input, 
-when you pass `page_container` as the `id` of your container element for a page container,
-it will only check the route if it is an output.
+- `auth_protect_layouts=True` — wraps every non-public page's layout with `protected()`, so unauthenticated routing callbacks return a placeholder instead of real content.
+- `auth_protect_layouts_kwargs` — keyword arguments forwarded to `protected()`, such as a custom `missing_permissions_output`.
+- `page_container` — the `id` of your `page_container` element. When set, only the routing callback targeting that element is intercepted; without it, all callbacks using `pathname` as an input are checked.
 
-## Example Usage with ClerkAuth
+See the [Clerk Authentication](#clerk-authentication) section for a detailed explanation and comparison table of default vs layout-protected behaviour.
+
+## Clerk Authentication
+
+[Clerk](https://clerk.com) is a complete authentication and user management solution. `ClerkAuth` integrates Clerk's backend SDK with your Dash app to provide seamless, secure authentication.
+
+### Prerequisites
+
+Before using `ClerkAuth`, you need a Clerk account and application. Set the following environment variables (or pass them directly to `ClerkAuth`):
+
+| Variable | Description |
+|---|---|
+| `CLERK_SECRET_KEY` | Your Clerk secret key (e.g. `sk_live_...`) |
+| `CLERK_PUBLISHABLE_KEY` | Your Clerk publishable key (e.g. `pk_live_...`) |
+| `CLERK_DOMAIN` | Your Clerk Frontend API URL (e.g. `https://accounts.your-app.clerk.accounts.dev`) |
+| `CLERK_ALLOWED_PARTIES` | *(optional)* Comma-separated list of allowed party URLs |
+
+Install the required backend SDK:
+
+```
+pip install clerk-backend-api
+```
+
+### Basic ClerkAuth Setup
 
 ```python
+import os
 from dash import Dash, html, dcc, page_container
 from dash_auth_plus import ClerkAuth, public_callback
 from dash import Input, Output, register_page
 
 app = Dash(__name__, use_pages=True, pages_folder='', suppress_callback_exceptions=True)
 
-# Initialize ClerkAuth with public routes
+# Initialize ClerkAuth — reads CLERK_* env vars automatically
 auth = ClerkAuth(
     app,
-    secret_key="aStaticSecretKey!",
+    secret_key="aStaticSecretKey!",  # protect Flask session cookies
     log_signins=True,
-    auth_protect_layouts=True,
-    page_container='_pages_content',
+    auth_protect_layouts=True,       # protect page layouts, not just routes
+    page_container='_pages_content', # id of your page_container element
     public_routes=['/', '/user/<user_id>/public'],
 )
 
@@ -549,7 +578,7 @@ def user_layout(user_id: str, **kwargs):
         html.H1(f"User {user_id} (public)"),
         dcc.Link("Authenticated user content", href=f"/user/{user_id}/private"),
     ]
-register_page('user', path_template="/user/<user_id>/public", layout=user_layout)
+register_page('user', path_template="/user/{user_id}/public", layout=user_layout)
 
 # Private user page (protected)
 def user_private(user_id: str, **kwargs):
@@ -563,14 +592,248 @@ if __name__ == "__main__":
     app.run(debug=True)
 ```
 
-Important things to note about ClerkAuth:
-- if you are using your own logout method, you will need to have the `clerk_logged_in` local storage variable set to `false` to ensure the user is logged out.
-- this can be done by a script similar to the following:
+### `auth_protect_layouts` — Layout-Level Protection
+
+By default, `ClerkAuth` (and other auth classes) protect routes at the HTTP request level: an unauthenticated request to a protected route is redirected to the login page. This works well for navigation, but every page in a multi-page Dash app still renders the same layout shell, and Dash's routing callback can load private page content before auth is verified client-side.
+
+Setting `auth_protect_layouts=True` adds **layout-level protection**: for every registered page that is not in your `public_routes`, the `layout` function is wrapped with `protected()`. If an unauthenticated user's routing callback fires for a private page, the layout returns a "no access" message (or a custom component) instead of the real content.
+
+```python
+auth = ClerkAuth(
+    app,
+    secret_key="aStaticSecretKey!",
+    auth_protect_layouts=True,
+    # Customise what unauthenticated users see in place of private page content
+    auth_protect_layouts_kwargs=dict(
+        missing_permissions_output=html.Div("Please log in to view this page.")
+    ),
+    page_container='_pages_content',  # id of the page_container element
+    public_routes=['/'],
+)
+```
+
+When `page_container` is set to the `id` of your `page_container` element, only the routing callback that targets that element is intercepted. Without it, *all* callbacks that use `pathname` as an input are checked—which may be overly broad.
+
+**Summary of behaviour:**
+
+| Setting | Route-level protection | Layout-level protection |
+|---|---|---|
+| default (`auth_protect_layouts=False`) | ✅ Redirects unauthenticated requests | ❌ Private layout still renders via routing callback |
+| `auth_protect_layouts=True` | ✅ Redirects unauthenticated requests | ✅ Private layouts return placeholder until authenticated |
+
+### Custom Login Page (Embedded Sign-In)
+
+By default, `ClerkAuth` redirects unauthenticated users to Clerk's hosted sign-in page on your Clerk domain. While simple, this means users leave your application's visual environment to log in.
+
+A better user experience keeps the user on your domain throughout the login flow. You can achieve this by serving a Dash page (or a plain Flask route) that embeds Clerk's `<clerk-sign-in>` web component. When the user authenticates via the embedded component, the Clerk JS listener that `ClerkAuth` injects automatically calls your app's `/auth_callback` endpoint and redirects the user back to the page they were trying to reach.
+
+#### Step 1 — Create a custom login page
+
+Add a page to your Dash app (using Dash Pages) that renders the Clerk sign-in component:
+
+*pages/login.py*
+```python
+from dash import html, register_page, dcc
+
+register_page(__name__, path="/login", title="Sign In")
+
+layout = html.Div(
+    [
+        html.Div(
+            [
+                html.H2("Sign in", style={"marginBottom": "1rem"}),
+                # The <clerk-sign-in> web component is injected by Clerk's JS SDK.
+                # It renders Clerk's sign-in UI inline — no redirect to Clerk's hosted page.
+                html.Div(id="clerk-sign-in-container"),
+                dcc.Interval(id="_clerk_mount_interval", interval=300, max_intervals=20),
+            ],
+            style={
+                "display": "flex",
+                "flexDirection": "column",
+                "alignItems": "center",
+                "justifyContent": "center",
+                "minHeight": "60vh",
+            },
+        )
+    ]
+)
+```
+
+*app.py (clientside callback to mount the Clerk sign-in UI)*
+```python
+from dash import Dash, html, dcc, page_container, clientside_callback, Input, Output, State
+from dash_auth_plus import ClerkAuth, public_callback
+
+app = Dash(__name__, use_pages=True, suppress_callback_exceptions=True)
+
+auth = ClerkAuth(
+    app,
+    secret_key="aStaticSecretKey!",
+    auth_protect_layouts=True,
+    page_container='_pages_content',
+    public_routes=['/login', '/'],  # /login must be public
+)
+
+app.layout = html.Div(
+    [
+        html.Div(
+            [
+                dcc.Link("Home", href="/"),
+                dcc.Link("Sign in", href="/login"),
+                dcc.Link("Logout", href="/logout", refresh=True),
+            ],
+            style={"display": "flex", "gap": "1rem", "padding": "0.5rem 1rem", "background": "lightgray"},
+        ),
+        page_container,
+    ],
+    style={"display": "flex", "flexDirection": "column"},
+)
+
+# Mount the Clerk <clerk-sign-in> web component once Clerk JS is ready
+clientside_callback(
+    """
+    function(n) {
+        if (typeof window.Clerk === 'undefined') return window.dash_clientside.no_update;
+        var container = document.getElementById('clerk-sign-in-container');
+        if (!container) return window.dash_clientside.no_update;
+        // Only mount once
+        if (container.querySelector('.cl-rootBox')) return window.dash_clientside.no_update;
+        window.Clerk.mountSignIn(container);
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("clerk-sign-in-container", "children"),
+    Input("_clerk_mount_interval", "n_intervals"),
+    prevent_initial_call=True,
+)
+
+if __name__ == "__main__":
+    app.run(debug=True)
+```
+
+> **How it works:** `ClerkAuth` injects Clerk's JavaScript SDK into every page. When the user fills in the embedded sign-in form and authenticates, Clerk fires a session event. The listener injected by `ClerkAuth` detects the new session and automatically calls `/auth_callback`, which creates the server-side session and redirects the user to their original destination.
+
+> **Important:** Add `/login` (or whichever path you choose) to `public_routes` so unauthenticated users can reach the sign-in page.
+
+#### Step 2 (optional) — Override `login_request` to redirect to your custom page
+
+By default, unauthenticated users are redirected to Clerk's hosted sign-in page. To send them to your embedded login page instead, subclass `ClerkAuth` and override `login_request`:
+
+```python
+from flask import redirect, session
+from dash_auth_plus import ClerkAuth
+
+class EmbeddedClerkAuth(ClerkAuth):
+    """ClerkAuth that redirects to a local login page instead of Clerk's hosted page."""
+
+    def login_request(self):
+        # Save where the user was trying to go
+        self._redirect_test()
+        # Redirect to your Dash login page
+        return redirect("/login")
+
+
+auth = EmbeddedClerkAuth(
+    app,
+    secret_key="aStaticSecretKey!",
+    auth_protect_layouts=True,
+    page_container='_pages_content',
+    public_routes=['/login', '/'],
+)
+```
+
+With this setup the full login flow stays within your application:
+
+1. User visits a protected page → redirected to `/login` (your Dash page)
+2. User authenticates via the embedded `<clerk-sign-in>` component
+3. Clerk JS listener calls `/auth_callback`, creating the server-side session
+4. User is redirected back to the page they originally requested
+
+### User Groups with ClerkAuth
+
+User groups work the same way as with other auth providers. Pass a dict or callable as `user_groups`:
+
+```python
+# Static group mapping by email
+auth = ClerkAuth(
+    app,
+    secret_key="aStaticSecretKey!",
+    user_groups={
+        "alice@example.com": ["admin", "editor"],
+        "bob@example.com": ["viewer"],
+    },
+)
+
+# Dynamic group lookup function
+def get_groups(email: str):
+    # look up groups from your database
+    return fetch_groups_from_db(email)
+
+auth = ClerkAuth(
+    app,
+    secret_key="aStaticSecretKey!",
+    user_groups=get_groups,
+)
+```
+
+The resolved groups are stored in `session["user"]["groups"]` and can be used with `check_groups`, `protected`, and `protected_callback` just like any other auth provider.
+
+### Customising the Post-Login Callback
+
+Use `login_user_callback` to run custom logic (e.g. fetching additional user data, logging) after a successful Clerk authentication:
+
+```python
+from flask import session, redirect
+
+def my_post_login(user, idp):
+    """
+    user : Clerk user object
+    idp  : always 'clerk' for ClerkAuth
+    """
+    session["user"] = {
+        "email": user.email_addresses[0].email_address,
+        "name": f"{user.first_name} {user.last_name}",
+        "role": fetch_role_from_db(user.id),
+    }
+    return redirect("/dashboard")
+
+auth = ClerkAuth(
+    app,
+    secret_key="aStaticSecretKey!",
+    login_user_callback=my_post_login,
+)
+```
+
+### Customising the Logout Flow
+
+Use `before_logout` to run cleanup logic before the session is cleared (e.g. audit logging):
+
+```python
+from flask import session
+import logging
+
+def on_logout():
+    email = session.get("user", {}).get("email")
+    logging.info("User %s is logging out.", email)
+
+auth = ClerkAuth(
+    app,
+    secret_key="aStaticSecretKey!",
+    before_logout=on_logout,
+    # Optionally replace the default "Logged out" page with custom HTML:
+    logout_page="<h1>You've been signed out. <a href='/'>Go home</a></h1>",
+)
+```
+
+### Important Notes
+
+- If you implement your own logout mechanism (outside of the `/logout` route), set the `clerk_logged_in` localStorage flag to `false` so the Clerk JS listener knows the session has ended:
+
 ```html
 <!-- Client-Side Logout State Reset -->
 <script>
-  // Reset the client-side authentication flag on logout
   localStorage.setItem('clerk_logged_in', 'false');
 </script>
 ```
-- The `Clerk` api is available in the browser, so you have access to all the api methods available in the Clerk documentation.
+
+- The full Clerk JS API (`window.Clerk`) is available in the browser on every page after `ClerkAuth` is initialised. You can use any method from the [Clerk JS documentation](https://clerk.com/docs/references/javascript/overview), such as `window.Clerk.user` to access the current user's profile client-side.
