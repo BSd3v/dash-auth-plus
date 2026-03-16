@@ -15,55 +15,48 @@ from werkzeug.routing import Map, Rule
 
 import diskcache
 import hashlib
+import tempfile
 
 cache = None  # Lazily initialized diskcache.Cache instance
 
+def get_cache(cache_dir: Optional[str] = None):
+    if cache_dir is None:
+        cache_dir = tempfile.gettempdir() + "/dash-auth-cache"
+    return diskcache.Cache(cache_dir)
 
 def _get_page_paths_and_adapter():
     global cache
 
-    # Lazily import dash and obtain page_registry if available to
-    # preserve compatibility with older Dash versions that lack it.
     try:
         import dash
-
         registry = getattr(dash, "page_registry", {})
     except ImportError:
         registry = {}
 
-    # Lazily initialize the diskcache.Cache to avoid filesystem side
-    # effects at import time. If initialization fails (e.g., on a
-    # read-only filesystem), caching is simply disabled.
     if cache is None:
         try:
-            cache = diskcache.Cache("./dash-auth-cache")  # or any directory
+            cache = get_cache()
         except Exception:
             cache = None
 
-    # Build a deterministic signature (hash) of the current registry
     signature = hashlib.sha256(repr(registry).encode()).hexdigest()
-
     cache_key = f"dash_page_registry_{signature}"
 
-    # Try to load from cache, if available
-    result = None
+    page_paths = page_templates = None
     if cache is not None:
-        result = cache.get(cache_key)
-    if result:
-        return result["paths"], result["adapter"]
+        cached = cache.get(cache_key)
+        if cached is not None:
+            page_paths, page_templates = cached
 
-    # Compute new values
-    page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
-    page_templates = [
-        pg.get("path_template") for pg in registry.values() if pg.get("path_template")
-    ]
+    if page_paths is None or page_templates is None:
+        page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
+        page_templates = [pg.get("path_template") for pg in registry.values() if pg.get("path_template")]
+        if cache is not None:
+            cache.set(cache_key, (page_paths, page_templates))
+
     adapter = None
     if page_templates:
         adapter = Map([Rule(t) for t in page_templates]).bind("")
-
-    # Save to cache atomically, if caching is enabled
-    if cache is not None:
-        cache.set(cache_key, {"paths": page_paths, "adapter": adapter})
 
     return page_paths, adapter
 
