@@ -4,13 +4,12 @@ import traceback
 from typing import Dict, List, Optional, Union, Callable
 
 import dash
-import flask
 from authlib.integrations.flask_client import OAuth
-from dash_auth_plus.auth import Auth
+from dash_auth_plus.auth import Auth, _get_page_paths_and_adapter
 from flask import Response, redirect, request, session, jsonify
-from werkzeug.routing import Map, Rule
 from dotenv import load_dotenv
-from urllib.parse import urljoin, quote, unquote
+from urllib.parse import urljoin, quote, unquote, urlparse
+from werkzeug.routing import Rule, Map
 
 load_dotenv()
 
@@ -88,6 +87,8 @@ class ClerkAuth(Auth):
         auth_protect_layouts: Optional[bool] = False,
         auth_protect_layouts_kwargs: Optional[dict] = None,
         page_container: Optional[str] = None,
+        default_html_style: Optional[str] = None,
+        before_logout: Optional[Callable] = None,
     ):
         """Secure a Dash app through OpenID Connect.
 
@@ -144,6 +145,11 @@ class ClerkAuth(Auth):
         :param page_container: string, id of the page container in the app.
             If not provided, this will set the page_container_test to True,
             meaning all pathname callbacks will be judged.
+        :param default_html_style: str, optional
+            Custom CSS styles to inject into the HTML head, by default None.
+        :param before_logout: Callable, optional
+            A function to call before logging out the user, by default None.
+            This can be used to perform cleanup actions or logging before the user is logged out.
 
         Raises
         ------
@@ -175,6 +181,11 @@ class ClerkAuth(Auth):
             self.force_https_callback = False
 
         self.initialized = False
+        self.default_html_style = (
+            "<style>\n" + default_html_style + "\n</style>"
+            if default_html_style
+            else ""
+        )
         self.clerk_secret_key = clerk_secret_key
         self.clerk_domain = clerk_domain
         self.clerk_publishable_key = clerk_publishable_key
@@ -185,7 +196,7 @@ class ClerkAuth(Auth):
         self.login_route = "/login"
         self.logout_route = "/logout"
         self.authenticate_request_options = AuthenticateRequestOptions
-        self.app.server.after_request(self.set_loggedin_if_user_session)
+        self.before_logout = before_logout or (lambda: None)
         host = app.server.config.get("SERVER_NAME") or "127.0.0.1"
         port = app.server.config.get("SERVER_PORT", 8050)
         self.allowed_parties = (
@@ -223,8 +234,7 @@ class ClerkAuth(Auth):
             app.server.secret_key = secret_key
 
         if app.server.secret_key is None:
-            raise RuntimeError(
-                """
+            raise RuntimeError("""
                 app.server.secret_key is missing.
                 Generate a secret key in your Python session
                 with the following commands:
@@ -237,8 +247,7 @@ class ClerkAuth(Auth):
                 Note that you should not do this dynamically:
                 you should create a key and then assign the value of
                 that key in your code/via a secret.
-                """
-            )
+                """)
 
         if secure_session:
             app.server.config["SESSION_COOKIE_SECURE"] = True
@@ -275,8 +284,9 @@ class ClerkAuth(Auth):
             """
                         <script>
                             """
-            + f"if (window.location.pathname == '{self.logout_route}') "
-            + """{
+            + f"const logout_path = '{self.logout_route}';"
+            + """
+            if (logout_path === window.location.pathname) {
                                 localStorage.setItem('clerk_logged_in', false)
                             }
                             // Helper to ensure Clerk is ready
@@ -291,12 +301,21 @@ class ClerkAuth(Auth):
                                             // CRITICAL: Always call load() to ensure Clerk initializes properly
                                             window.Clerk.load().then(() => {
                                                 // Set up session sync listener
+                                                if (window.location.pathname == logout_path) {
+                                                    window.Clerk.signOut().then(() => {
+                                                        localStorage.setItem('clerk_logged_in', false);
+                                                        console.log('User signed out via logout route');
+                                                        return;
+                                                    }).catch(err => {
+                                                        console.error('Error signing out:', err);
+                                                        return;
+                                                    });
+                                                };
                                                 if (window.Clerk.addListener) {
                                                     window.Clerk.addListener((resources) => {
                                                         var clerk_logged_in = JSON.parse(localStorage.getItem('clerk_logged_in')) || false;
                                                         // Store auth state in localStorage for persistence
                                                         if (resources.user && resources.session) {
-                                                            window?.dash_clientside?.set_props('clerk_user_update', {data: new Date().toISOString()});
                                                             if (!clerk_logged_in) {
                                                                 console.log('logging in Clerk user');
                                                                 setTimeout(() => {
@@ -359,7 +378,7 @@ class ClerkAuth(Auth):
                         """
         )
 
-        self.clerk_script = f"{clerk_script}\n{init_script}\n"
+        self.clerk_script = f"{clerk_script}\n{init_script}\n{self.default_html_style}"
 
         if dash.__version__ >= "3.0":
             # Use the new OAuth2App class for Dash 3+
@@ -394,6 +413,49 @@ class ClerkAuth(Auth):
                 f"{self.clerk_script}\n</head>",
             )
 
+    def _redirect_test(self):
+        registered_paths = []
+        map_adapter = None
+
+        app_config = getattr(getattr(self, "app", None), "config", {})
+        if "pages_folder" in app_config:
+            # Use the cached helper to avoid rebuilding paths/adapters on every
+            # request and to safely handle Dash versions without page_registry.
+            registered_paths, map_adapter = _get_page_paths_and_adapter()
+
+        # Extract the intended URL and preserve path + query + fragment
+        parsed_url = (
+            urlparse(request.url)
+            if request.method == "GET"
+            else urlparse(request.headers.get("referer", request.host_url))
+        )
+        url_path = parsed_url.path
+        url_relative = parsed_url.path
+        if parsed_url.query:
+            url_relative += "?" + parsed_url.query
+        if parsed_url.fragment:
+            url_relative += "#" + parsed_url.fragment
+
+        # Determine validity of the path against registered Dash Pages, if any
+        if registered_paths or map_adapter is not None:
+            # Check static paths
+            valid = url_path in registered_paths
+            # Check templates using the pre-built cached adapter
+            if not valid and map_adapter is not None:
+                try:
+                    map_adapter.match(url_path)
+                    valid = True
+                except Exception:
+                    valid = False
+        else:
+            # When no pages are registered (e.g. single-page apps), accept the URL
+            valid = True
+
+        session["url"] = url_relative if valid else "/"
+        # Avoid redirecting back to the login route itself
+        if "url" in session and urlparse(session["url"]).path == self.login_route:
+            del session["url"]
+
     def _create_redirect_uri(self):
         """Create the redirect uri based on callback endpoint and idp."""
         kwargs = {"_external": True}
@@ -405,11 +467,8 @@ class ClerkAuth(Auth):
             "/sign-in?redirect_url="
             + quote(request.host_url[:-1] + self.callback_route, safe=""),
         )
-        session["url"] = (
-            request.url
-            if request.method == "GET"
-            else request.headers.get("referer", request.host_url)
-        )
+        if not session.get("url"):
+            self._redirect_test()
         if request.headers.get("X-Forwarded-Host"):
             host = request.headers.get("X-Forwarded-Host")
             redirect_uri = redirect_uri.replace(request.host, host, 1)
@@ -417,32 +476,52 @@ class ClerkAuth(Auth):
 
     def login_request(self):
         """Start the login process."""
+        resp = self._create_redirect_uri()
         if request.method == "POST":
             return jsonify(
                 {
                     "multi": True,
-                    "sideUpdate": {
-                        "_clerk_login_url": {"href": self._create_redirect_uri()}
-                    },
+                    "sideUpdate": {"_clerk_login_url": {"href": resp}},
                 }
             )
-        return redirect(self._create_redirect_uri())
+        return redirect(resp)
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
+        try:
+            self.before_logout()
+        except Exception as e:
+            logging.error(
+                "Error in before_logout hook: %s\n%s", e, traceback.format_exc()
+            )
         if "user" in session:
             try:
-                self.clerk_client.sessions.revoke(
-                    session_id=session.get("user", {}).get("session_id", "")
+                request_state = self.clerk_client.authenticate_request(
+                    request,
+                    self.authenticate_request_options(
+                        authorized_parties=self.allowed_parties,
+                    ),
                 )
+                if request_state.is_signed_in:
+                    try:
+                        self.clerk_client.sessions.revoke(
+                            session_id=request_state.payload.get("sid")
+                        )
+                    except Exception as e:
+                        logging.error(
+                            "Error revoking Clerk session during logout: %s\n%s",
+                            e,
+                            traceback.format_exc(),
+                        )
             except Exception as e:
                 logging.error(
-                    "Failed to revoke Clerk session: %s\n%s", e, traceback.format_exc()
+                    "Error authenticating Clerk request during logout: %s\n%s",
+                    e,
+                    traceback.format_exc(),
                 )
         session.clear()
         response = Response(
-            self.logout_page
-            or f"""
+            self.logout_page or f"""
         <div style="display: flex; flex-direction: column;
         gap: 0.75rem; padding: 3rem 5rem;">
             <div>Logged out successfully</div>
@@ -482,7 +561,6 @@ class ClerkAuth(Auth):
                 "clerk_user_id": user.id,
                 "userid": user.username,
                 "email": email,
-                "session_id": sid,
             }
             if callable(self._user_groups):
                 session["user"]["groups"] = self._user_groups(email) + (
@@ -500,11 +578,79 @@ class ClerkAuth(Auth):
             return redirect(url)
         return {"status": "ok", "content": "User logged in successfully."}
 
+    def _get_safe_redirect_url(self, url: str) -> Optional[str]:
+        """
+        Validate a user-supplied redirect URL and return a safe relative URL or None.
+
+        The function accepts:
+        - Relative URLs without scheme/netloc that start with a single '/'.
+        - Absolute URLs with scheme/netloc only if they are same-origin with the
+          current request (same scheme and host); these are normalized to a
+          relative URL (path + optional query/fragment) before being returned.
+
+        Any URL that does not meet these criteria is rejected to prevent
+        open-redirects to external domains.
+        """
+        if not url:
+            return None
+
+        # Reject URLs containing ASCII control characters (including CR/LF) to
+        # prevent header injection and issues in Flask/Werkzeug redirect().
+        for ch in url:
+            codepoint = ord(ch)
+            if codepoint < 32 or codepoint == 127:
+                return None
+
+        parsed = urlparse(url)
+
+        # If scheme or netloc are present, only allow same-origin absolute URLs
+        if parsed.scheme or parsed.netloc:
+            try:
+                current_scheme = request.scheme
+                current_host = request.host
+            except RuntimeError:
+                # Outside of a request context; be conservative and reject
+                return None
+
+            # Reject if the absolute URL is not same-origin
+            if parsed.scheme != current_scheme or parsed.netloc != current_host:
+                return None
+
+            # Normalize same-origin absolute URL to a relative path (+query/fragment)
+            url = parsed.path or "/"
+            if parsed.query:
+                url += "?" + parsed.query
+            if parsed.fragment:
+                url += "#" + parsed.fragment
+
+            parsed = urlparse(url)
+
+        # At this point, only relative URLs without scheme/netloc are allowed
+        if parsed.scheme or parsed.netloc:
+            return None
+
+        # Require a leading '/' and disallow protocol-relative URLs starting with '//'
+        if not url.startswith("/") or url.startswith("//"):
+            return None
+
+        return url
+
     def check_clerk_auth(self):
         """Pulls Clerk user data from the request and stores it in the session."""
         if request.args.get("redirect_url"):
-            # If redirect_uri is provided, use it
-            session["url"] = unquote(request.args.get("redirect_url"))
+            # If redirect_uri is provided, validate and use it only if safe.
+            # Allow it to overwrite session["url"] when the current value is
+            # unset or points to the login/callback route, to avoid redirect loops.
+            raw_redirect_url = unquote(request.args.get("redirect_url"))
+            safe_url = self._get_safe_redirect_url(raw_redirect_url)
+            if safe_url:
+                current_url = session.get("url")
+                current_path = urlparse(current_url).path if current_url else None
+                if not current_path or current_path in (
+                    self.login_route,
+                    self.callback_route,
+                ):
+                    session["url"] = safe_url
 
         request_state = self.clerk_client.authenticate_request(
             request,
@@ -518,7 +664,10 @@ class ClerkAuth(Auth):
             sess = self.clerk_client.sessions.get(session_id=sid)
             user_data = self.clerk_client.users.get(user_id=sess.user_id)
             return self.after_logged_in(user_data, sid)
-        return f"""<div>logging in...</div>{self.clerk_script}"""
+        return f"""
+        <div>logging in...</div>
+        {self.clerk_script}
+        """
 
     def is_authorized(self):  # pylint: disable=C0116
         """Check whether the user is authenticated."""
@@ -535,30 +684,10 @@ class ClerkAuth(Auth):
             "user" in session
             or map_adapter.test(request.path)
             or self.clerk_domain in request.url
-            or request.path.startswith("/.well-known/")
+            or (request.path and request.path.startswith("/.well-known/"))
         ):
             return True
         return False
-
-    def set_loggedin_if_user_session(self, response: Response):
-        """Set the response data to indicate if the user is logged in."""
-        try:
-            if session.get("user") and request.path == "/_dash-update-component":
-                response_data = response.get_json()
-                sideUpdate = response_data.get("sideUpdate", {})
-                response_data["sideUpdate"] = {
-                    **sideUpdate,
-                    "clerk_logged_in": {"data": True},
-                }
-                return flask.make_response(response_data)
-        except Exception:
-            logging.error(
-                "Error setting logged in state: %s\n%s",
-                traceback.format_exc(),
-                exc_info=True,
-            )
-            pass
-        return response
 
     def get_user_data(self):
         request_state = self.clerk_client.authenticate_request(
@@ -572,5 +701,5 @@ class ClerkAuth(Auth):
             sid = request_state.payload.get("sid")
             sess = self.clerk_client.sessions.get(session_id=sid)
             user_data = self.clerk_client.users.get(user_id=sess.user_id)
-            return user_data.__dict__
+            return {**user_data.__dict__}
         return False  # "user not authenticated"

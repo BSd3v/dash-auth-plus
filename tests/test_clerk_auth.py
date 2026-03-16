@@ -3,11 +3,13 @@ from dash import Dash, html, dcc, page_container
 from dash_auth_plus import ClerkAuth
 import os
 import pytest
+import flask
 
 
 def spinup_app():
     from dash import Dash, html, dcc, page_container
     from dash_auth_plus import DashAuthComponents
+
     app = Dash(
         __name__, use_pages=True, pages_folder="", suppress_callback_exceptions=True
     )
@@ -22,8 +24,7 @@ def spinup_app():
     app.layout = html.Div(
         [
             DashAuthComponents.ClerkProvider(
-                [],
-                publishableKey=os.getenv("CLERK_PUBLISHABLE_KEY")
+                [], publishableKey=os.getenv("CLERK_PUBLISHABLE_KEY")
             ),
             html.Div(
                 [
@@ -147,3 +148,133 @@ def test_clerk_auth_flow(dash_duo):
         "clerk" in dash_duo.driver.page_source.lower()
         or "sign-in" in dash_duo.driver.current_url
     )
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for ClerkAuth._get_safe_redirect_url
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def safe_redirect():
+    """Return a bound _get_safe_redirect_url method on a bare ClerkAuth instance.
+
+    ``object.__new__`` bypasses ``ClerkAuth.__init__``, so no Dash app or Clerk
+    credentials are needed.  The method only uses ``self`` for dispatch and
+    reads ``flask.request`` when the supplied URL is absolute.
+    """
+    instance = object.__new__(ClerkAuth)
+    return instance._get_safe_redirect_url
+
+
+@pytest.fixture
+def http_request_ctx():
+    """A Flask test-request context on http://example.com:8050/."""
+    app = flask.Flask(__name__)
+    with app.test_request_context("/", base_url="http://example.com:8050/"):
+        yield
+
+
+@pytest.fixture
+def https_request_ctx():
+    """A Flask test-request context on https://example.com:8443/."""
+    app = flask.Flask(__name__)
+    with app.test_request_context("/", base_url="https://example.com:8443/"):
+        yield
+
+
+class TestGetSafeRedirectUrl:
+    """Unit tests for ClerkAuth._get_safe_redirect_url."""
+
+    # ------------------------------------------------------------------
+    # Accepted relative URLs
+    # ------------------------------------------------------------------
+
+    def test_relative_root(self, safe_redirect):
+        assert safe_redirect("/") == "/"
+
+    def test_relative_path(self, safe_redirect):
+        assert safe_redirect("/dashboard") == "/dashboard"
+
+    def test_relative_path_with_query(self, safe_redirect):
+        assert safe_redirect("/search?q=hello") == "/search?q=hello"
+
+    def test_relative_path_with_fragment(self, safe_redirect):
+        assert safe_redirect("/page#section") == "/page#section"
+
+    def test_relative_path_with_query_and_fragment(self, safe_redirect):
+        assert safe_redirect("/page?x=1#anchor") == "/page?x=1#anchor"
+
+    def test_relative_nested_path(self, safe_redirect):
+        assert safe_redirect("/user/42/profile") == "/user/42/profile"
+
+    # ------------------------------------------------------------------
+    # Rejected non-relative / external URLs
+    # ------------------------------------------------------------------
+
+    def test_empty_string_rejected(self, safe_redirect):
+        assert safe_redirect("") is None
+
+    def test_no_leading_slash_rejected(self, safe_redirect):
+        assert safe_redirect("dashboard") is None
+
+    def test_protocol_relative_rejected(self, safe_redirect):
+        """URLs beginning with '//' must be rejected (protocol-relative open redirect)."""
+        assert safe_redirect("//evil.com/steal") is None
+
+    def test_external_http_rejected(self, safe_redirect):
+        assert safe_redirect("http://evil.com/steal") is None
+
+    def test_external_https_rejected(self, safe_redirect):
+        assert safe_redirect("https://attacker.example/steal") is None
+
+    # ------------------------------------------------------------------
+    # Absolute URLs outside a Flask request context
+    # ------------------------------------------------------------------
+
+    def test_absolute_url_outside_request_context_rejected(self, safe_redirect):
+        """Without a request context the method must conservatively reject absolute URLs."""
+        assert safe_redirect("http://example.com/path") is None
+
+    # ------------------------------------------------------------------
+    # Same-origin absolute URLs (accepted and normalised)
+    # ------------------------------------------------------------------
+
+    def test_same_origin_absolute_accepted(self, safe_redirect, http_request_ctx):
+        assert safe_redirect("http://example.com:8050/path") == "/path"
+
+    def test_same_origin_absolute_root(self, safe_redirect, http_request_ctx):
+        """Absolute same-origin URL with no path component normalises to '/'."""
+        assert safe_redirect("http://example.com:8050") == "/"
+
+    def test_same_origin_absolute_with_query(self, safe_redirect, http_request_ctx):
+        assert safe_redirect("http://example.com:8050/search?q=1") == "/search?q=1"
+
+    def test_same_origin_absolute_with_fragment(self, safe_redirect, http_request_ctx):
+        assert safe_redirect("http://example.com:8050/page#sec") == "/page#sec"
+
+    def test_same_origin_absolute_with_query_and_fragment(
+        self, safe_redirect, http_request_ctx
+    ):
+        assert (
+            safe_redirect("http://example.com:8050/page?x=1#anchor")
+            == "/page?x=1#anchor"
+        )
+
+    def test_same_origin_https_accepted(self, safe_redirect, https_request_ctx):
+        assert safe_redirect("https://example.com:8443/protected") == "/protected"
+
+    # ------------------------------------------------------------------
+    # Cross-origin absolute URLs (rejected)
+    # ------------------------------------------------------------------
+
+    def test_different_host_rejected(self, safe_redirect, http_request_ctx):
+        assert safe_redirect("http://other.com:8050/path") is None
+
+    def test_different_scheme_rejected(self, safe_redirect, http_request_ctx):
+        """Same host but different scheme must be rejected."""
+        assert safe_redirect("https://example.com:8050/path") is None
+
+    def test_different_port_rejected(self, safe_redirect, http_request_ctx):
+        """Same host but different port is a different origin and must be rejected."""
+        assert safe_redirect("http://example.com:9000/path") is None

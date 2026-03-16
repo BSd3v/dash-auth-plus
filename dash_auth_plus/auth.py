@@ -11,6 +11,37 @@ from .public_routes import (
     get_public_routes,
 )
 from .group_protection import protect_layouts
+from werkzeug.routing import Map, Rule
+
+_cached_page_registry_data = (
+    None  # In-process cache; page_registry is fixed after startup
+)
+
+
+def _get_page_paths_and_adapter():
+    global _cached_page_registry_data
+
+    if _cached_page_registry_data is not None:
+        return _cached_page_registry_data
+
+    try:
+        import dash
+
+        registry = getattr(dash, "page_registry", {})
+    except ImportError:
+        registry = {}
+
+    page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
+    page_templates = [
+        pg.get("path_template") for pg in registry.values() if pg.get("path_template")
+    ]
+
+    adapter = None
+    if page_templates:
+        adapter = Map([Rule(t) for t in page_templates]).bind("")
+
+    _cached_page_registry_data = (page_paths, adapter)
+    return _cached_page_registry_data
 
 
 class Auth(ABC):
@@ -91,7 +122,7 @@ class Auth(ABC):
                     page_container_test = next(
                         (
                             out
-                            for out in body["outputs"]
+                            for out in body.get("outputs", [])
                             if isinstance(out, dict)
                             and out.get("id") == self.page_container
                             and out.get("property") == "children"
@@ -120,6 +151,31 @@ class Auth(ABC):
             # matches a public route, or whether the request is authorised
             if public_routes.test(request.path) or self.is_authorized():
                 return None
+
+            # When auth_protect_layouts is enabled, avoid redirecting only for registered pages
+            if self.auth_protect_layouts:
+                # Use cached data derived from page_registry to avoid
+                # recomputing these structures on every request.
+                page_paths, map_adapter = _get_page_paths_and_adapter()
+
+                # Check if request.path matches any page path
+                if request.path in page_paths:
+                    return None
+
+                # Check if request.path matches any page template
+                if map_adapter is not None:
+                    try:
+                        map_adapter.match(request.path)
+                        return None
+                    except Exception:
+                        pass
+
+                # Also allow Dash internal endpoints
+                if request.path in (
+                    "/_dash-layout",
+                    "/_dash-dependencies",
+                ) or request.path.startswith("/_dash-component-suites/"):
+                    return None
 
             # Otherwise, ask the user to log in
             return self.login_request()

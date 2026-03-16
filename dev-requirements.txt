@@ -1,11 +1,11 @@
-dash[testing]>=2
+dash[testing]>=2,<4.1
 requests[security]
 flake8
 flask
 werkzeug
 pytest
 authlib
-black
+black<=26.1.0
 clerk-sdk
 clerk-backend-api==3.0.1
 python-dotenv

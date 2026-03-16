@@ -6,7 +6,6 @@ from dash._callback import GLOBAL_CALLBACK_MAP
 from dash import get_app
 from werkzeug.routing import Map, MapAdapter, Rule
 
-
 DASH_PUBLIC_ASSETS_EXTENSIONS = "js,css"
 BASE_PUBLIC_ROUTES = [
     f"/assets/<path:path>.{ext}"
@@ -69,14 +68,14 @@ def public_callback(*callback_args, **callback_kwargs):
     """
 
     def decorator(func):
-
         wrapped_func = callback(*callback_args, **callback_kwargs)(func)
         try:
             callback_id = next(
                 (
                     k
                     for k, v in GLOBAL_CALLBACK_MAP.items()
-                    if inspect.getsource(v["callback"]) == inspect.getsource(func)
+                    if "callback" in v
+                    and inspect.getsource(v["callback"]) == inspect.getsource(func)
                 ),
                 None,
             )

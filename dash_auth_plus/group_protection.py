@@ -7,10 +7,60 @@ import dash
 from dash.exceptions import PreventUpdate
 from flask import session, has_request_context
 from dash import html
+from inspect import Parameter, iscoroutinefunction, isawaitable, signature
+from functools import lru_cache
 
-
-OutputVal = Union[Callable[[], Any], Any]
+OutputVal = Union[Callable[..., Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
+
+
+def _cached_signature(func: Callable[..., Any]):
+    """
+    Cached wrapper around inspect.signature to avoid repeated introspection
+    on the same callable in hot paths.
+
+    Normalizes bound methods to their underlying function to avoid retaining
+    references to instance objects in the LRU cache.
+    """
+    # For bound methods, use the underlying function object so that the cache
+    # does not hold strong references to the instance.
+    base_func = getattr(func, "__func__", func)
+    return _cached_signature_impl(base_func)
+
+
+@lru_cache(maxsize=256)
+def _cached_signature_impl(func: Callable[..., Any]):
+    """
+    Internal cached implementation keyed on the underlying function object.
+    """
+    return signature(func)
+
+
+def _process_output(output, *args, path=None, **kwargs):
+    if not callable(output):
+        return output
+    if path is None:
+        return output(*args, **kwargs)
+
+    try:
+        output_signature = _cached_signature(output)
+    except (TypeError, ValueError):
+        return output(*args, **kwargs)
+
+    supports_kwargs = any(
+        param.kind == Parameter.VAR_KEYWORD
+        for param in output_signature.parameters.values()
+    )
+    path_param = output_signature.parameters.get("path")
+    has_posonly_path = (
+        path_param is not None and path_param.kind is Parameter.POSITIONAL_ONLY
+    )
+    if (supports_kwargs or path_param is not None) and not has_posonly_path:
+        # Merge/override 'path' into kwargs so it is only passed once.
+        merged_kwargs = dict(kwargs)
+        merged_kwargs["path"] = path
+        return output(*args, **merged_kwargs)
+    return output(*args, **kwargs)
 
 
 def list_groups(
@@ -41,6 +91,7 @@ def list_groups(
 def check_groups(
     groups: Optional[Union[Callable, List[str]]] = None,
     *,
+    path: Optional[str] = None,
     groups_key: str = "groups",
     groups_str_split: str = None,
     check_type: CheckType = "one_of",
@@ -61,10 +112,15 @@ def check_groups(
     :param groups_str_split: Used to split groups if provided as a string
     :param check_type: Type of check to perform.
         Either "one_of", "all_of" or "none_of"
+    :param path: Current route path. When ``groups`` is callable, this is only
+        forwarded as a ``path`` keyword argument if the callable accepts
+        ``path`` as a keyword argument or arbitrary keyword arguments via
+        ``**kwargs``.
     :param group_lookup: A dictionary of kwargs to be passed
         if groups is a function.
         e.g. {"path": "/test"} will work with this as a
-        groups function: check_path(path)
+        groups function: check_path(path). If ``group_lookup`` already contains
+        ``path``, that explicit value is used instead of ``path=...``.
     :param restricted_users: List of restricted users or a python function
         to return a list of users.
          If this is a function, will be called with
@@ -98,7 +154,64 @@ def check_groups(
             # User is restricted
             return False
     if callable(groups):
-        groups = groups(**(group_lookup or {}))
+        has_posonly_path = False
+        requires_path = False
+        try:
+            params = _cached_signature(groups).parameters
+        except (TypeError, ValueError):
+            # Fall back to calling without injecting a 'path' kwarg if the
+            # callable's signature cannot be inspected (e.g. some built-ins).
+            accepts_path = False
+        else:
+            has_kw_path = any(
+                p.name == "path"
+                and p.kind in (Parameter.KEYWORD_ONLY, Parameter.POSITIONAL_OR_KEYWORD)
+                for p in params.values()
+            )
+            has_posonly_path = any(
+                p.name == "path" and p.kind is Parameter.POSITIONAL_ONLY
+                for p in params.values()
+            )
+            has_var_kw = any(p.kind == Parameter.VAR_KEYWORD for p in params.values())
+            # Only inject 'path' as a keyword if it is accepted as a keyword
+            # argument, or if **kwargs is present and there is no positional-only
+            # 'path' parameter that would conflict with a 'path=' kwarg.
+            accepts_path = has_kw_path or (has_var_kw and not has_posonly_path)
+            # Determine whether the callable defines a required 'path' parameter
+            param_path = next((p for p in params.values() if p.name == "path"), None)
+            if param_path is not None and param_path.default is Parameter.empty:
+                requires_path = True
+        kwargs = dict(group_lookup or {})
+        if has_posonly_path and "path" in kwargs:
+            raise TypeError(
+                "The 'groups' callable defines a positional-only 'path' parameter, "
+                "but 'path' was provided via group_lookup as a keyword argument. "
+                "Remove 'path' from group_lookup or update the callable to accept "
+                "'path' as a keyword argument."
+            )
+        # If the callable requires a 'path' argument but none has been provided
+        # via group_lookup and no explicit 'path' is available, raise a clear
+        # error instead of silently passing path=None.
+        if requires_path and "path" not in kwargs and path is None:
+            raise TypeError(
+                "The 'groups' callable requires a 'path' argument, but neither "
+                "'path' nor group_lookup['path'] was provided."
+            )
+        # Only inject 'path' as a keyword argument when we actually have a
+        # non-None path value to pass.
+        if accepts_path and "path" not in kwargs and path is not None:
+            kwargs["path"] = path
+        if has_posonly_path and "path" not in kwargs:
+            # For callables with a positional-only 'path' parameter, pass 'path'
+            # positionally rather than as a keyword argument when it is available.
+            if path is not None:
+                groups = groups(path, **kwargs)
+            else:
+                # No path value to supply positionally; let Python raise a
+                # missing-argument error if 'path' is truly required.
+                groups = groups(**kwargs)
+        else:
+            groups = groups(**kwargs)
     if groups is None:
         return True
 
@@ -130,11 +243,15 @@ def protected(
     of authentication and permissions.
 
     :param unauthenticated_output: Output when the user is not authenticated.
-        Note: needs to be a function with no argument or static outputs.
+        Note: can be static output, a function with no argument, or a function
+        accepting a ``path`` keyword argument (either explicitly or via
+        ``**kwargs``).
     :param missing_permissions_output: Output when the user is authenticated
         but does not have the right permissions.
         It defaults to unauthenticated_output when not set.
-        Note: needs to be a function with no argument or static outputs.
+        Note: can be static output, a function with no argument, or a function
+        accepting a ``path`` keyword argument (either explicitly or via
+        ``**kwargs``).
     :param groups: List of authorized user groups
         or a python function to return a list of groups.
         If this is a function, will be called with group_lookup dict as kwargs.
@@ -166,31 +283,74 @@ def protected(
         missing_permissions_output = unauthenticated_output
 
     def decorator(output: OutputVal):
-        def wrap(*args, **kwargs):
-            def process_output(output, *args, **kwargs):
-                if isinstance(output, Callable):
-                    return output(*args, **kwargs)
-                return output
+        if iscoroutinefunction(output):
 
-            authorized = check_groups(
-                groups=groups,
-                groups_key=groups_key,
-                groups_str_split=groups_str_split,
-                check_type=check_type,
-                group_lookup=group_lookup,
-                restricted_users=restricted_users,
-                restricted_users_lookup=restricted_users_lookup,
-                user_session_key=user_session_key,
-            )
-            if authorized is None:
-                return process_output(unauthenticated_output)
-            if authorized:
-                return process_output(output, *args, **kwargs)
-            return process_output(missing_permissions_output)
+            async def async_wrap(*args, **kwargs):
+                path = _kwargs.get("path_template") or _kwargs.get("path")
+                authorized = check_groups(
+                    groups=groups,
+                    groups_key=groups_key,
+                    groups_str_split=groups_str_split,
+                    check_type=check_type,
+                    group_lookup=group_lookup,
+                    restricted_users=restricted_users,
+                    restricted_users_lookup=restricted_users_lookup,
+                    user_session_key=user_session_key,
+                    path=path,
+                )
+                if authorized is None:
+                    result = _process_output(unauthenticated_output, path=path)
+                    return await result if isawaitable(result) else result
+                if authorized:
+                    result = output(*args, **kwargs)
+                    return await result if isawaitable(result) else result
+                result = _process_output(missing_permissions_output, path=path)
+                return await result if isawaitable(result) else result
 
-        if isinstance(output, Callable):
-            return wrap
-        return wrap()
+            return async_wrap
+        else:
+
+            def wrap(*args, **kwargs):
+                path = _kwargs.get("path_template") or _kwargs.get("path")
+                authorized = check_groups(
+                    groups=groups,
+                    groups_key=groups_key,
+                    groups_str_split=groups_str_split,
+                    check_type=check_type,
+                    group_lookup=group_lookup,
+                    restricted_users=restricted_users,
+                    restricted_users_lookup=restricted_users_lookup,
+                    user_session_key=user_session_key,
+                    path=path,
+                )
+                if authorized is None:
+                    result = _process_output(unauthenticated_output, path=path)
+                    if isawaitable(result):
+                        raise TypeError(
+                            "Got awaitable from 'unauthenticated_output' in synchronous "
+                            "protected view/callback. Async outputs are only supported "
+                            "when the wrapped function is async."
+                        )
+                    return result
+                if authorized:
+                    result = _process_output(output, *args, **kwargs)
+                    if isawaitable(result):
+                        raise TypeError(
+                            "Got awaitable from 'output' in synchronous protected "
+                            "view/callback. Async outputs are only supported when the "
+                            "wrapped function is async."
+                        )
+                    return result
+                result = _process_output(missing_permissions_output, path=path)
+                if isawaitable(result):
+                    raise TypeError(
+                        "Got awaitable from 'missing_permissions_output' in synchronous "
+                        "protected view/callback. Async outputs are only supported when "
+                        "the wrapped function is async."
+                    )
+                return result
+
+            return wrap if callable(output) else wrap()
 
     return decorator
 
@@ -311,13 +471,13 @@ def protect_layouts(
             if public_routes:
                 if isinstance(public_routes, list):
                     if not (
-                        pg["path"] in public_routes
+                        pg.get("path") in public_routes
                         or pg.get("path_template") in public_routes
                     ):
                         pg["layout"] = protected(**new_kwargs)(pg["layout"])
                 elif not (
                     public_routes.test(pg.get("path_template"))
-                    or public_routes.test(pg["path"])
+                    or public_routes.test(pg.get("path"))
                 ):
                     pg["layout"] = protected(**new_kwargs)(pg["layout"])
             else:
