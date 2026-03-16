@@ -19,16 +19,19 @@ import tempfile
 
 cache = None  # Lazily initialized diskcache.Cache instance
 
+
 def get_cache(cache_dir: Optional[str] = None):
     if cache_dir is None:
         cache_dir = tempfile.gettempdir() + "/dash-auth-cache"
     return diskcache.Cache(cache_dir)
+
 
 def _get_page_paths_and_adapter():
     global cache
 
     try:
         import dash
+
         registry = getattr(dash, "page_registry", {})
     except ImportError:
         registry = {}
@@ -50,7 +53,11 @@ def _get_page_paths_and_adapter():
 
     if page_paths is None or page_templates is None:
         page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
-        page_templates = [pg.get("path_template") for pg in registry.values() if pg.get("path_template")]
+        page_templates = [
+            pg.get("path_template")
+            for pg in registry.values()
+            if pg.get("path_template")
+        ]
         if cache is not None:
             cache.set(cache_key, (page_paths, page_templates))
 
