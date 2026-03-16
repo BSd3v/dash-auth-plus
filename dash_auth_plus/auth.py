@@ -86,15 +86,9 @@ class Auth(ABC):
     def _get_request(self):
         """Return the current request object using a backend-agnostic approach.
 
-        For Dash 4.1+ this delegates to the backend's request adapter.
-        For older Dash versions it falls back to Flask's ``request`` proxy.
+        This delegates to Dash's backend request adapter.
         """
-        if hasattr(self.app, "backend"):
-            return self.app.backend.request_adapter()
-        # Dash < 4.1 – Flask is always the server
-        from flask import request as _flask_request  # noqa: PLC0415
-
-        return _flask_request
+        return self.app.backend.request_adapter()
 
     def _protect(self):
         """Add a before_request authentication check on all routes.
@@ -104,12 +98,7 @@ class Auth(ABC):
             * The request is authorised by `Auth.is_authorised`
         """
 
-        # Dash 4.1+ exposes a backend-agnostic before_request hook;
-        # for older Dash versions we fall back to the Flask server directly.
-        if hasattr(self.app, "backend"):
-            register_hook = self.app.backend.before_request
-        else:
-            register_hook = self.app.server.before_request
+        register_hook = self.app.backend.before_request
 
         def before_request_auth():
             req = self._get_request()

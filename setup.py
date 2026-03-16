@@ -17,7 +17,7 @@ setup(
     description="Dash Authorization Package.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    install_requires=["dash>=2.0.0", "flask", "werkzeug", "python-dotenv"],
+    install_requires=["dash>=4.1.0rc0", "flask", "werkzeug", "python-dotenv"],
     extras_require={
         "oidc": ["authlib"],
         "clerk": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"],
