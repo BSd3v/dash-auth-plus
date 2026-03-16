@@ -13,21 +13,16 @@ from .public_routes import (
 from .group_protection import protect_layouts
 from werkzeug.routing import Map, Rule
 
-import diskcache
-import hashlib
-import tempfile
-
-cache = None  # Lazily initialized diskcache.Cache instance
-
-
-def get_cache(cache_dir: Optional[str] = None):
-    if cache_dir is None:
-        cache_dir = tempfile.gettempdir() + "/dash-auth-cache"
-    return diskcache.Cache(cache_dir)
+_cached_page_registry_data = (
+    None  # In-process cache; page_registry is fixed after startup
+)
 
 
 def _get_page_paths_and_adapter():
-    global cache
+    global _cached_page_registry_data
+
+    if _cached_page_registry_data is not None:
+        return _cached_page_registry_data
 
     try:
         import dash
@@ -36,36 +31,17 @@ def _get_page_paths_and_adapter():
     except ImportError:
         registry = {}
 
-    if cache is None:
-        try:
-            cache = get_cache()
-        except Exception:
-            cache = None
-
-    signature = hashlib.sha256(repr(registry).encode()).hexdigest()
-    cache_key = f"dash_page_registry_{signature}"
-
-    page_paths = page_templates = None
-    if cache is not None:
-        cached = cache.get(cache_key)
-        if cached is not None:
-            page_paths, page_templates = cached
-
-    if page_paths is None or page_templates is None:
-        page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
-        page_templates = [
-            pg.get("path_template")
-            for pg in registry.values()
-            if pg.get("path_template")
-        ]
-        if cache is not None:
-            cache.set(cache_key, (page_paths, page_templates))
+    page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
+    page_templates = [
+        pg.get("path_template") for pg in registry.values() if pg.get("path_template")
+    ]
 
     adapter = None
     if page_templates:
         adapter = Map([Rule(t) for t in page_templates]).bind("")
 
-    return page_paths, adapter
+    _cached_page_registry_data = (page_paths, adapter)
+    return _cached_page_registry_data
 
 
 class Auth(ABC):
