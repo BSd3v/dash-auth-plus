@@ -2,7 +2,7 @@ from __future__ import absolute_import
 from abc import ABC, abstractmethod
 from typing import Optional, Union
 
-from dash import Dash, page_registry
+from dash import Dash
 from flask import request
 
 from .public_routes import (
@@ -32,11 +32,19 @@ def _get_page_paths_and_adapter():
     if _cached_page_paths is not None:
         return _cached_page_paths, _cached_page_templates_adapter
 
+    # Lazily import dash and obtain page_registry if available to
+    # preserve compatibility with older Dash versions that lack it.
+    try:
+        import dash
+        registry = getattr(dash, "page_registry", {})
+    except ImportError:
+        registry = {}
+
     # For Dash 2.x/3.x, use page_registry to build the paths and templates.
-    page_paths = [pg["path"] for pg in page_registry.values() if "path" in pg]
+    page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
     page_templates = [
         pg.get("path_template")
-        for pg in page_registry.values()
+        for pg in registry.values()
         if pg.get("path_template")
     ]
 
