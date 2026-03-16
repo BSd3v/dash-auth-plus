@@ -13,27 +13,12 @@ from .public_routes import (
 from .group_protection import protect_layouts
 from werkzeug.routing import Map, Rule
 
-# Cached data derived from Dash's page_registry to avoid recomputing
-# these structures on every request when auth_protect_layouts is enabled.
-_cached_page_paths = None
-_cached_page_templates_adapter = None
-# Signature of the page_registry contents (paths/templates) used to
-# detect when the registry has changed and the cache must be rebuilt.
-_cached_page_registry_signature = None
+import diskcache
+import hashlib
 
+cache = diskcache.Cache('./dash-auth-cache')  # or any directory
 
-def _get_page_paths_and_adapter():
-    """
-    Lazily compute and cache page paths and the compiled MapAdapter
-    used to match path templates. This avoids rebuilding these
-    structures on every request in the before_request handler.
-
-    The cache is keyed by a simple, deterministic signature derived
-    from dash.page_registry so that changes to registered pages
-    (e.g. in tests, hot reload, or dynamic registration) will cause
-    the cached data to be refreshed.
-    """
-
+def _get_page_paths_and_adapter(registry):
     # Lazily import dash and obtain page_registry if available to
     # preserve compatibility with older Dash versions that lack it.
     try:
@@ -43,46 +28,93 @@ def _get_page_paths_and_adapter():
     except ImportError:
         registry = {}
 
-    global _cached_page_paths, _cached_page_templates_adapter, _cached_page_registry_signature
+    # Build a deterministic signature (hash) of the current registry
+    signature = hashlib.sha256(repr(registry).encode()).hexdigest()
 
-    # Build a deterministic signature of the current page_registry
-    # based on the route name, path, and path_template. This is
-    # lightweight and sufficient to detect changes relevant to auth.
-    current_signature = tuple(
-        sorted(
-            (
-                name,
-                pg.get("path"),
-                pg.get("path_template"),
-            )
-            for name, pg in registry.items()
-        )
-    )
+    cache_key = f'dash_page_registry_{signature}'
 
-    # If already cached and the registry hasn't changed, reuse.
-    if (
-        _cached_page_paths is not None
-        and _cached_page_registry_signature == current_signature
-    ):
-        return _cached_page_paths, _cached_page_templates_adapter
+    # Try to load from cache
+    result = cache.get(cache_key)
+    if result:
+        return result['paths'], result['adapter']
 
-    # For Dash 2.x/3.x, use page_registry to build the paths and templates.
+    # Compute new values
     page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
     page_templates = [
         pg.get("path_template") for pg in registry.values() if pg.get("path_template")
     ]
-
-    # Cache the simple path list and the signature.
-    _cached_page_paths = page_paths
-    _cached_page_registry_signature = current_signature
-
-    # Build and cache the MapAdapter only if templates exist.
+    adapter = None
     if page_templates:
-        _cached_page_templates_adapter = Map([Rule(t) for t in page_templates]).bind("")
-    else:
-        _cached_page_templates_adapter = None
+        from werkzeug.routing import Map, Rule
+        adapter = Map([Rule(t) for t in page_templates]).bind("")
 
-    return _cached_page_paths, _cached_page_templates_adapter
+    # Save to cache atomically
+    cache.set(cache_key, {'paths': page_paths, 'adapter': adapter})
+
+    return page_paths, adapter
+
+#
+# def _get_page_paths_and_adapter():
+#     """
+#     Lazily compute and cache page paths and the compiled MapAdapter
+#     used to match path templates. This avoids rebuilding these
+#     structures on every request in the before_request handler.
+#
+#     The cache is keyed by a simple, deterministic signature derived
+#     from dash.page_registry so that changes to registered pages
+#     (e.g. in tests, hot reload, or dynamic registration) will cause
+#     the cached data to be refreshed.
+#     """
+#
+#     # Lazily import dash and obtain page_registry if available to
+#     # preserve compatibility with older Dash versions that lack it.
+#     try:
+#         import dash
+#
+#         registry = getattr(dash, "page_registry", {})
+#     except ImportError:
+#         registry = {}
+#
+#     global _cached_page_paths, _cached_page_templates_adapter, _cached_page_registry_signature
+#
+#     # Build a deterministic signature of the current page_registry
+#     # based on the route name, path, and path_template. This is
+#     # lightweight and sufficient to detect changes relevant to auth.
+#     current_signature = tuple(
+#         sorted(
+#             (
+#                 name,
+#                 pg.get("path"),
+#                 pg.get("path_template"),
+#             )
+#             for name, pg in registry.items()
+#         )
+#     )
+#
+#     # If already cached and the registry hasn't changed, reuse.
+#     if (
+#         _cached_page_paths is not None
+#         and _cached_page_registry_signature == current_signature
+#     ):
+#         return _cached_page_paths, _cached_page_templates_adapter
+#
+#     # For Dash 2.x/3.x, use page_registry to build the paths and templates.
+#     page_paths = [pg["path"] for pg in registry.values() if "path" in pg]
+#     page_templates = [
+#         pg.get("path_template") for pg in registry.values() if pg.get("path_template")
+#     ]
+#
+#     # Cache the simple path list and the signature.
+#     _cached_page_paths = page_paths
+#     _cached_page_registry_signature = current_signature
+#
+#     # Build and cache the MapAdapter only if templates exist.
+#     if page_templates:
+#         _cached_page_templates_adapter = Map([Rule(t) for t in page_templates]).bind("")
+#     else:
+#         _cached_page_templates_adapter = None
+#
+#     return _cached_page_paths, _cached_page_templates_adapter
 
 
 class Auth(ABC):
