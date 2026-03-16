@@ -197,8 +197,8 @@ class ClerkAuth(Auth):
         self.logout_route = "/logout"
         self.authenticate_request_options = AuthenticateRequestOptions
         self.before_logout = before_logout or (lambda: None)
-        host = app.server.config.get("SERVER_NAME") or "127.0.0.1"
-        port = app.server.config.get("SERVER_PORT", 8050)
+        host = self._get_config_value("SERVER_NAME", "127.0.0.1")
+        port = self._get_config_value("SERVER_PORT", 8050)
         self.allowed_parties = (
             allowed_parties
             + [
@@ -231,9 +231,9 @@ class ClerkAuth(Auth):
         self.initialized = True
 
         if secret_key is not None:
-            app.server.secret_key = secret_key
+            self._set_secret_key(secret_key)
 
-        if app.server.secret_key is None:
+        if self._get_secret_key() is None:
             raise RuntimeError("""
                 app.server.secret_key is missing.
                 Generate a secret key in your Python session
@@ -250,12 +250,12 @@ class ClerkAuth(Auth):
                 """)
 
         if secure_session:
-            app.server.config["SESSION_COOKIE_SECURE"] = True
-            app.server.config["SESSION_COOKIE_HTTPONLY"] = True
+            self._set_config_value("SESSION_COOKIE_SECURE", True)
+            self._set_config_value("SESSION_COOKIE_HTTPONLY", True)
 
         self.session_cookie_name = "dash_auth_plus_session"
         self.session_serializer = URLSafeSerializer(
-            app.server.secret_key,
+            self._get_secret_key(),
             salt="dash-auth-plus-clerk-session",
         )
         self.session_cookie_secure = secure_session

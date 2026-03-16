@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from abc import ABC, abstractmethod
 import logging
+import os
 from typing import Optional, Union
 
 from dash import Dash
@@ -96,15 +97,60 @@ class Auth(ABC):
     def _session_cookie_name(self):
         return "dash_auth_plus_session"
 
+    def _get_server_config(self):
+        return getattr(self.app.server, "config", None)
+
+    def _get_auth_settings(self):
+        settings = getattr(self.app, "_dash_auth_plus_settings", None)
+        if settings is None:
+            settings = {}
+            setattr(self.app, "_dash_auth_plus_settings", settings)
+        return settings
+
+    def _get_config_value(self, key, default=None):
+        settings = self._get_auth_settings()
+        if key in settings:
+            return settings[key]
+        if key in self.app.config:
+            return self.app.config.get(key)
+        server_config = self._get_server_config()
+        if hasattr(server_config, "get"):
+            return server_config.get(key, default)
+        return default
+
+    def _set_config_value(self, key, value):
+        self._get_auth_settings()[key] = value
+        server_config = self._get_server_config()
+        if server_config is not None:
+            try:
+                server_config[key] = value
+            except Exception:
+                pass
+
+    def _get_secret_key(self):
+        secret_key = (
+            self._get_auth_settings().get("SECRET_KEY")
+            or getattr(self.app.server, "secret_key", None)
+            or os.environ.get("DASH_AUTH_PLUS_SECRET_KEY")
+        )
+        return secret_key
+
+    def _set_secret_key(self, secret_key):
+        self._get_auth_settings()["SECRET_KEY"] = secret_key
+        try:
+            self.app.server.secret_key = secret_key
+        except Exception:
+            pass
+
     @property
     def _session_cookie_secure(self):
-        return bool(self.app.server.config.get("SESSION_COOKIE_SECURE", False))
+        return bool(self._get_config_value("SESSION_COOKIE_SECURE", False))
 
     def _session_cookie_path(self):
         return self.app.config.get("url_base_pathname") or "/"
 
     def _get_session_serializer(self):
-        secret_key = getattr(self.app.server, "secret_key", None)
+        secret_key = self._get_secret_key()
         if secret_key is None:
             raise RuntimeError("Session is not available. Have you set a secret key?")
         return URLSafeSerializer(secret_key, salt="dash-auth-plus-session")

@@ -64,7 +64,7 @@ class BasicAuth(Auth):
         self._auth_func = auth_func
         self._user_groups = user_groups
         if secret_key is not None:
-            app.server.secret_key = secret_key
+            self._set_secret_key(secret_key)
 
         if self._auth_func is not None:
             if username_password_list is not None:

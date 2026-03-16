@@ -140,9 +140,9 @@ class OIDCAuth(Auth):
         self.login_user_callback = login_user_callback
 
         if secret_key is not None:
-            app.server.secret_key = secret_key
+            self._set_secret_key(secret_key)
 
-        if app.server.secret_key is None:
+        if self._get_secret_key() is None:
             raise RuntimeError("""
                 app.server.secret_key is missing.
                 Generate a secret key in your Python session
@@ -159,8 +159,8 @@ class OIDCAuth(Auth):
                 """)
 
         if secure_session:
-            app.server.config["SESSION_COOKIE_SECURE"] = True
-            app.server.config["SESSION_COOKIE_HTTPONLY"] = True
+            self._set_config_value("SESSION_COOKIE_SECURE", True)
+            self._set_config_value("SESSION_COOKIE_HTTPONLY", True)
 
         self.oauth = OAuth(app.server)
 
