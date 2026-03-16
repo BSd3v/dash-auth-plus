@@ -46,8 +46,6 @@ def _get_page_paths_and_adapter(registry):
     ]
     adapter = None
     if page_templates:
-        from werkzeug.routing import Map, Rule
-
         adapter = Map([Rule(t) for t in page_templates]).bind("")
 
     # Save to cache atomically
