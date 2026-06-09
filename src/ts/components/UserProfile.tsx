@@ -10,7 +10,7 @@ interface CustomPageProps {
     [key: string]: any;
 }
 
-function customPage(props: CustomPageProps, index?: number) {
+function customPage(props: CustomPageProps, index?: number, basePath?: any[]) {
     const { children, label, labelIcon, url, ...otherProps } = props;
     return (
       <ClerkUserProfile.Page
@@ -20,7 +20,7 @@ function customPage(props: CustomPageProps, index?: number) {
         key={index}
         {...otherProps}
       >
-        {newRenderDashComponent(children)}
+        {newRenderDashComponent(children, index, basePath)}
       </ClerkUserProfile.Page>
     );
 }
@@ -30,7 +30,11 @@ interface UserProfileProps extends PropsWithChildren {}
 const UserProfile: React.FC<UserProfileProps> = ({ children, ...others }) => {
     const customPages = React.Children.toArray(children).map((child, index) => {
       const childProps = resolveChildProps(child);
-      return customPage(childProps as CustomPageProps, index);
+      const basePath =
+         React.isValidElement(child) && typeof child !== "string"
+         ? child.props?.componentPath ?? []
+         : [];
+      return customPage(childProps as CustomPageProps, index, basePath);
     });
 
     return (
