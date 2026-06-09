@@ -10,3 +10,4 @@ clerk-sdk
 clerk-backend-api==3.0.1
 python-dotenv
 pyyaml
+urllib3<2
