@@ -234,8 +234,7 @@ class ClerkAuth(Auth):
             self._set_secret_key(secret_key)
 
         if self._get_secret_key() is None:
-            raise RuntimeError(
-                """
+            raise RuntimeError("""
                 app.server.secret_key is missing.
                 Generate a secret key in your Python session
                 with the following commands:
@@ -248,8 +247,7 @@ class ClerkAuth(Auth):
                 Note that you should not do this dynamically:
                 you should create a key and then assign the value of
                 that key in your code/via a secret.
-                """
-            )
+                """)
 
         if secure_session:
             self._set_config_value("SESSION_COOKIE_SECURE", True)
@@ -774,8 +772,7 @@ class ClerkAuth(Auth):
                     )
         session_data.clear()
         response = self.app.backend.make_response(
-            self.logout_page
-            or f"""
+            self.logout_page or f"""
         <div style="display: flex; flex-direction: column;
         gap: 0.75rem; padding: 3rem 5rem;">
             <div>Logged out successfully</div>
