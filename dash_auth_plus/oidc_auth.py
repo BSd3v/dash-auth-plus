@@ -170,24 +170,68 @@ class OIDCAuth(Auth):
         if not re.findall(r"/<idp>(?=/|$)", callback_route):
             raise Exception("The callback route must contain a <idp> placeholder.")
 
-        app.server.add_url_rule(
-            login_route,
-            endpoint="oidc_login",
-            view_func=self.login_request,
-            methods=["GET"],
-        )
-        app.server.add_url_rule(
-            logout_route,
-            endpoint="oidc_logout",
-            view_func=self.logout,
-            methods=["GET"],
-        )
-        app.server.add_url_rule(
-            callback_route,
-            endpoint="oidc_callback",
-            view_func=self.callback,
-            methods=["GET"],
-        )
+        if getattr(app.backend, "server_type", None) == "fastapi":
+            from fastapi import Request as FastAPIRequest
+            from dash.backends._fastapi import set_current_request, reset_current_request
+
+            def login_view(idp: str, request: FastAPIRequest):
+                token = set_current_request(request)
+                try:
+                    return self.login_request(idp)
+                finally:
+                    reset_current_request(token)
+
+            def logout_view(request: FastAPIRequest):
+                token = set_current_request(request)
+                try:
+                    return self.logout()
+                finally:
+                    reset_current_request(token)
+
+            def callback_view(idp: str, request: FastAPIRequest):
+                token = set_current_request(request)
+                try:
+                    return self.callback(idp)
+                finally:
+                    reset_current_request(token)
+
+            app.backend.add_url_rule(
+                login_route,
+                endpoint="oidc_login",
+                view_func=login_view,
+                methods=["GET"],
+            )
+            app.backend.add_url_rule(
+                logout_route,
+                endpoint="oidc_logout",
+                view_func=logout_view,
+                methods=["GET"],
+            )
+            app.backend.add_url_rule(
+                callback_route,
+                endpoint="oidc_callback",
+                view_func=callback_view,
+                methods=["GET"],
+            )
+        else:
+            app.backend.add_url_rule(
+                login_route,
+                endpoint="oidc_login",
+                view_func=self.login_request,
+                methods=["GET"],
+            )
+            app.backend.add_url_rule(
+                logout_route,
+                endpoint="oidc_logout",
+                view_func=self.logout,
+                methods=["GET"],
+            )
+            app.backend.add_url_rule(
+                callback_route,
+                endpoint="oidc_callback",
+                view_func=self.callback,
+                methods=["GET"],
+            )
 
     def register_provider(self, idp_name: str, **kwargs):
         """Register an OpenID Connect provider.

@@ -260,19 +260,51 @@ class ClerkAuth(Auth):
         )
         self.session_cookie_secure = secure_session
 
-        app.server.add_url_rule(
-            self.logout_route,
-            endpoint="oidc_logout",
-            view_func=self.logout,
-            methods=["GET"],
-        )
+        if getattr(app.backend, "server_type", None) == "fastapi":
+            from fastapi import Request as FastAPIRequest
+            from dash.backends._fastapi import set_current_request, reset_current_request
 
-        app.server.add_url_rule(
-            self.callback_route,
-            endpoint="oidc_callback",
-            view_func=self.check_clerk_auth,
-            methods=["GET", "POST"],
-        )
+            def logout_view(request: FastAPIRequest):
+                token = set_current_request(request)
+                try:
+                    return self.logout()
+                finally:
+                    reset_current_request(token)
+
+            def callback_view(request: FastAPIRequest):
+                token = set_current_request(request)
+                try:
+                    return self.check_clerk_auth()
+                finally:
+                    reset_current_request(token)
+
+            app.backend.add_url_rule(
+                self.logout_route,
+                endpoint="oidc_logout",
+                view_func=logout_view,
+                methods=["GET"],
+            )
+
+            app.backend.add_url_rule(
+                self.callback_route,
+                endpoint="oidc_callback",
+                view_func=callback_view,
+                methods=["GET", "POST"],
+            )
+        else:
+            app.backend.add_url_rule(
+                self.logout_route,
+                endpoint="oidc_logout",
+                view_func=self.logout,
+                methods=["GET"],
+            )
+
+            app.backend.add_url_rule(
+                self.callback_route,
+                endpoint="oidc_callback",
+                view_func=self.check_clerk_auth,
+                methods=["GET", "POST"],
+            )
 
         clerk_script = f"""
             <script
@@ -291,8 +323,11 @@ class ClerkAuth(Auth):
                             """
             + f"const logout_path = '{self.logout_route}';"
             + """
+            const is_logout_route = logout_path === window.location.pathname;
+            const login_sync_key = 'clerk_login_sync_in_progress';
             if (logout_path === window.location.pathname) {
                                 localStorage.setItem('clerk_logged_in', false)
+                                sessionStorage.removeItem(login_sync_key)
                             }
                             // Helper to ensure Clerk is ready
                             var waitForClerk = function() {
@@ -318,28 +353,54 @@ class ClerkAuth(Auth):
                                                 };
                                                 if (window.Clerk.addListener) {
                                                     window.Clerk.addListener((resources) => {
+                                                        if (is_logout_route) {
+                                                            localStorage.setItem('clerk_logged_in', false);
+                                                            sessionStorage.removeItem(login_sync_key);
+                                                            return;
+                                                        }
                                                         var clerk_logged_in = JSON.parse(localStorage.getItem('clerk_logged_in')) || false;
+                                                        var login_sync_in_progress = sessionStorage.getItem(login_sync_key) === '1';
                                                         // Store auth state in localStorage for persistence
                                                         if (resources.user && resources.session) {
-                                                            if (!clerk_logged_in) {
+                                                            if (!clerk_logged_in && !login_sync_in_progress) {
+                                                                sessionStorage.setItem(login_sync_key, '1');
                                                                 console.log('logging in Clerk user');
-                                                                setTimeout(() => {
+                                                                setTimeout(async () => {
                                                                 var callbackUrl = window.location.origin + (window.location.pathname == '/auth_callback' ? window.location.pathname : '/auth_callback?redirect_url=' + encodeURIComponent(window.location.href))
+                                                                var token = null;
+                                                                try {
+                                                                    if (resources && resources.session && typeof resources.session.getToken === 'function') {
+                                                                        token = await resources.session.getToken();
+                                                                    } else if (window.Clerk && window.Clerk.session && typeof window.Clerk.session.getToken === 'function') {
+                                                                        token = await window.Clerk.session.getToken();
+                                                                    }
+                                                                } catch (err) {
+                                                                    console.warn('Could not obtain Clerk token for callback sync:', err);
+                                                                }
+                                                                var headers = token ? { 'Authorization': 'Bearer ' + token } : {};
                                                                 fetch(callbackUrl, {
                                                                     method: 'POST',
                                                                     redirect: 'follow',
-                                                                    credentials: 'same-origin'
+                                                                    credentials: 'same-origin',
+                                                                    headers: headers
                                                                 }).then(response => {
                                                                     localStorage.setItem('clerk_logged_in', true);
-                                                                    window.location.href = response.url;
+                                                                    if (response.url && response.url !== window.location.href) {
+                                                                        window.location.replace(response.url);
+                                                                    }
+                                                                }).catch(err => {
+                                                                    console.error('Error syncing Clerk session:', err);
+                                                                }).finally(() => {
+                                                                    sessionStorage.removeItem(login_sync_key);
                                                                 });
-                                                                }, 400);
+                                                                }, 150);
                                                             } else {
                                                                 console.log('Clerk session updated');
                                                             }
                                                         }
                                                         else if (clerk_logged_in) {
                                                             localStorage.setItem('clerk_logged_in', false);
+                                                            sessionStorage.removeItem(login_sync_key);
                                                             console.log('session ended, logging out');
                                                             """
             + f"""newLoc = window.location.origin + '{self.logout_route}';"""
@@ -348,6 +409,7 @@ class ClerkAuth(Auth):
                                                         }
                                                         else {
                                                             localStorage.setItem('clerk_logged_in', false);
+                                                            sessionStorage.removeItem(login_sync_key);
                                                         }
 
                                                     });
@@ -469,13 +531,11 @@ class ClerkAuth(Auth):
         ):
             del session_data["url"]
 
-    def _get_session(self, req):
+    def _get_session(self, req=None):
         """Return backend-agnostic session data cached in the request context."""
-        ctx = req.context
-        if isinstance(ctx, dict):
-            cached = ctx.get("_dash_auth_plus_session")
-        else:
-            cached = getattr(ctx, "_dash_auth_plus_session", None)
+        req = req if req is not None else self._get_request()
+        ctx = self._get_request_context(req)
+        cached = self._context_get(ctx, "_dash_auth_plus_session")
         if cached is not None:
             return cached
 
@@ -492,11 +552,7 @@ class ClerkAuth(Auth):
                     self.session_cookie_name,
                 )
                 session_data = {}
-
-        if isinstance(ctx, dict):
-            ctx["_dash_auth_plus_session"] = session_data
-        else:
-            setattr(ctx, "_dash_auth_plus_session", session_data)
+        self._context_set(ctx, "_dash_auth_plus_session", session_data)
         return session_data
 
     def _set_session_cookie(self, response, session_data):
@@ -518,6 +574,73 @@ class ClerkAuth(Auth):
         )
         return response
 
+    def _clear_clerk_cookies(self, response, req):
+        """Best-effort deletion of auth cookies present on this app domain."""
+        if not req:
+            return response
+        base_path = self.app.config.get("url_base_pathname") or "/"
+        cookie_paths = {"/", base_path.rstrip("/") or "/"}
+        for cookie in req.cookies:
+            if not re.match(r"^[A-Za-z0-9_.-]+$", cookie):
+                logging.debug(
+                    "Skipping cookie deletion for invalid cookie name: %r", cookie
+                )
+                continue
+            if (
+                cookie == self.session_cookie_name
+                or cookie.startswith("__clerk")
+                or cookie == "__session"
+                or cookie.startswith("__session_")
+                or cookie.startswith("__client_uat")
+            ):
+                for path in cookie_paths:
+                    response.delete_cookie(cookie, path=path)
+        return response
+
+    def _select_session_token(self, req):
+        """Select a deterministic __session token when duplicate cookies exist."""
+        raw_cookie_header = req.headers.get("cookie", "") or ""
+        header_tokens = []
+        active_context = req.cookies.get("clerk_active_context")
+        if raw_cookie_header:
+            for chunk in raw_cookie_header.split(";"):
+                name, _, value = chunk.strip().partition("=")
+                if (name == "__session" or name.startswith("__session_")) and value:
+                    header_tokens.append(unquote(value))
+
+        adapter_token = req.cookies.get("__session")
+        if adapter_token:
+            header_tokens.append(adapter_token)
+
+        for key, value in (req.cookies or {}).items():
+            if (key == "__session" or key.startswith("__session_")) and value:
+                header_tokens.append(value)
+
+        if active_context:
+            scoped_key = f"__session_{active_context}"
+            scoped_token = req.cookies.get(scoped_key)
+            if scoped_token:
+                # Prefer current Clerk context token by appending last.
+                header_tokens.append(scoped_token)
+
+        if not header_tokens:
+            return None
+
+        unique_tokens = []
+        for token in header_tokens:
+            if token not in unique_tokens:
+                unique_tokens.append(token)
+
+        jwt_like = [token for token in unique_tokens if token.count(".") == 2]
+        chosen = jwt_like[-1] if jwt_like else unique_tokens[-1]
+
+        if len(unique_tokens) > 1:
+            logging.warning(
+                "Multiple __session cookie values detected; using the most recent candidate."
+            )
+
+        return chosen
+
     def _request_method(self, req):
         """Read HTTP method from request adapters with a compatibility fallback."""
         method = getattr(req, "method", None)
@@ -530,6 +653,24 @@ class ClerkAuth(Auth):
             "Could not determine request method from adapter; defaulting to GET."
         )
         return "GET"
+
+    def _build_clerk_request(self, req):
+        """Build a request-like object that prioritizes the exact __session cookie token."""
+        headers = dict(req.headers or {})
+        # Ensure header lookup is consistent across adapters that may expose
+        # lowercase-only header keys.
+        if "Authorization" not in headers and headers.get("authorization"):
+            headers["Authorization"] = headers.get("authorization")
+        session_token = self._select_session_token(req)
+        has_auth_header = bool(headers.get("Authorization") or headers.get("authorization"))
+        if session_token and not has_auth_header:
+            headers["Authorization"] = f"Bearer {session_token}"
+
+        class _RequestProxy:
+            def __init__(self, proxied_headers):
+                self.headers = proxied_headers
+
+        return _RequestProxy(headers)
 
     def _redirect_response(self, target_url):
         response = self.app.backend.make_response("", status=302)
@@ -574,7 +715,14 @@ class ClerkAuth(Auth):
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
         req = self._get_request()
-        session_data = self._get_session(req)
+        try:
+            session_data = self._get_session(req)
+        except Exception as e:
+            logging.error(
+                "Error getting session data during logout: %s\n%s", e, traceback.format_exc()
+            )
+            session_data = {}
+        session_sid = session_data.get("sid")
         try:
             self.before_logout()
         except Exception as e:
@@ -584,7 +732,7 @@ class ClerkAuth(Auth):
         if "user" in session_data:
             try:
                 request_state = self.clerk_client.authenticate_request(
-                    req,
+                    self._build_clerk_request(req),
                     self.authenticate_request_options(
                         authorized_parties=self.allowed_parties,
                     ),
@@ -606,6 +754,15 @@ class ClerkAuth(Auth):
                     e,
                     traceback.format_exc(),
                 )
+            if session_sid:
+                try:
+                    self.clerk_client.sessions.revoke(session_id=session_sid)
+                except Exception as e:
+                    logging.error(
+                        "Error revoking Clerk session using stored sid during logout: %s\n%s",
+                        e,
+                        traceback.format_exc(),
+                    )
         session_data.clear()
         response = self.app.backend.make_response(
             self.logout_page or f"""
@@ -618,18 +775,7 @@ class ClerkAuth(Auth):
         """,
             content_type="text/html",
         )
-        for cookie in req.cookies:
-            if not re.match(r"^[A-Za-z0-9_.-]+$", cookie):
-                logging.debug(
-                    "Skipping cookie deletion for invalid cookie name: %r", cookie
-                )
-                continue
-            if (
-                cookie == self.session_cookie_name
-                or cookie.startswith("__clerk")
-                or cookie == "__session"
-            ):
-                response.delete_cookie(cookie)
+        self._clear_clerk_cookies(response, req)
         return self._clear_session_cookie(response)
 
     def after_logged_in(self, user: Optional[dict], sid):
@@ -661,6 +807,7 @@ class ClerkAuth(Auth):
                 "userid": user.username,
                 "email": email,
             }
+            session_data["sid"] = sid
             if callable(self._user_groups):
                 session_data["user"]["groups"] = self._user_groups(email) + (
                     session_data["user"].get("groups") or []
@@ -763,11 +910,24 @@ class ClerkAuth(Auth):
                     session_data["url"] = safe_url
 
         request_state = self.clerk_client.authenticate_request(
-            req,
+            self._build_clerk_request(req),
             self.authenticate_request_options(
                 authorized_parties=self.allowed_parties,
             ),
         )
+
+        reason = getattr(request_state, "reason", None)
+        reason_name = getattr(reason, "name", "")
+        if reason_name == "JWK_KID_MISMATCH":
+            logging.warning(
+                "Clerk token validation failed with JWK_KID_MISMATCH. "
+                "Clearing local auth state and restarting login flow."
+            )
+            session_data.clear()
+            recovery_target = self.app.config.get("url_base_pathname") or "/"
+            response = self._redirect_response(recovery_target)
+            self._clear_clerk_cookies(response, req)
+            return self._clear_session_cookie(response)
 
         if request_state.is_signed_in:
             sid = request_state.payload.get("sid")
@@ -786,6 +946,7 @@ class ClerkAuth(Auth):
     def is_authorized(self):  # pylint: disable=C0116
         """Check whether the user is authenticated."""
         req = self._get_request()
+        req_path = self._normalized_request_path(getattr(req, "path", None))
         session_data = self._get_session(req)
 
         map_adapter = Map(
@@ -798,9 +959,9 @@ class ClerkAuth(Auth):
 
         if (
             "user" in session_data
-            or map_adapter.test(req.path)
+            or self._path_matches_map(map_adapter, req_path)
             or self.clerk_domain in req.url
-            or (req.path and req.path.startswith("/.well-known/"))
+            or (req_path and req_path.startswith("/.well-known/"))
         ):
             return True
         return False
@@ -808,7 +969,7 @@ class ClerkAuth(Auth):
     def get_user_data(self):
         req = self._get_request()
         request_state = self.clerk_client.authenticate_request(
-            req,
+            self._build_clerk_request(req),
             self.authenticate_request_options(
                 authorized_parties=self.allowed_parties,
             ),

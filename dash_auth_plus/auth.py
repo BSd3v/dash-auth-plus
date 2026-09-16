@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 from abc import ABC, abstractmethod
+import inspect
 import logging
 import os
 from typing import Optional, Union
@@ -93,6 +94,88 @@ class Auth(ABC):
         """
         return self.app.backend.request_adapter()
 
+    def _normalized_request_path(self, path):
+        """Normalize a request path against Dash's base pathname.
+
+        Some backends can surface paths with `url_base_pathname` included.
+        Public-route and auth route maps are typically defined without that
+        prefix, so we strip it when present.
+        """
+        if not path:
+            return "/"
+
+        normalized = str(path)
+        if not normalized.startswith("/"):
+            normalized = "/" + normalized
+
+        base_path = (self.app.config.get("url_base_pathname") or "/").rstrip("/")
+        if base_path and base_path != "/":
+            if normalized == base_path:
+                return "/"
+            prefix = base_path + "/"
+            if normalized.startswith(prefix):
+                return "/" + normalized[len(prefix) :]
+
+        return normalized
+
+    def _path_matches_map(self, route_map, path):
+        """Test path against a Werkzeug map, with base-path normalization."""
+        normalized = self._normalized_request_path(path)
+        return route_map.test(path) or (
+            normalized != path and route_map.test(normalized)
+        )
+
+    def _get_callback_body_sync(self, req):
+        """Read callback request JSON for sync backends.
+
+        If the backend exposes an async-only getter, return an empty body.
+        """
+        get_json = getattr(req, "get_json", None)
+        if not callable(get_json):
+            return {}
+        if inspect.iscoroutinefunction(get_json):
+            return {}
+
+        body = get_json()
+        if inspect.isawaitable(body):
+            # Defensive: close unexpected coroutine objects to avoid warnings.
+            close = getattr(body, "close", None)
+            if callable(close):
+                close()
+            return {}
+
+        return body if isinstance(body, dict) else {}
+
+    async def _get_callback_body_async(self, req):
+        """Read callback request JSON for async-capable backends."""
+        get_json = getattr(req, "get_json", None)
+        if not callable(get_json):
+            return {}
+
+        body = get_json()
+        if inspect.isawaitable(body):
+            body = await body
+        return body if isinstance(body, dict) else {}
+
+    def _wrap_route_with_request_context(self, view_func):
+        """Wrap FastAPI auth routes so Dash's request context var is always set."""
+        if getattr(self.app.backend, "server_type", None) != "fastapi":
+            return view_func
+
+        try:
+            from dash.backends._fastapi import set_current_request, reset_current_request
+        except Exception:
+            return view_func
+
+        def wrapped(request, *args, **kwargs):
+            token = set_current_request(request)
+            try:
+                return view_func(*args, **kwargs)
+            finally:
+                reset_current_request(token)
+
+        return wrapped
+
     @property
     def _session_cookie_name(self):
         return "dash_auth_plus_session"
@@ -114,7 +197,7 @@ class Auth(ABC):
         if key in self.app.config:
             return self.app.config.get(key)
         server_config = self._get_server_config()
-        if hasattr(server_config, "get"):
+        if server_config is not None and hasattr(server_config, "get"):
             return server_config.get(key, default)
         return default
 
@@ -155,15 +238,43 @@ class Auth(ABC):
             raise RuntimeError("Session is not available. Have you set a secret key?")
         return URLSafeSerializer(secret_key, salt="dash-auth-plus-session")
 
+    def _get_request_context(self, request_ref):
+        """Return mutable per-request context for Flask/FastAPI adapters."""
+        ctx = getattr(request_ref, "context", None)
+        if ctx is not None:
+            return ctx
+
+        state = getattr(request_ref, "state", None)
+        if state is not None:
+            return state
+
+        fallback = getattr(request_ref, "_dash_auth_plus_context", None)
+        if fallback is None:
+            fallback = {}
+            try:
+                setattr(request_ref, "_dash_auth_plus_context", fallback)
+            except Exception:
+                pass
+        return fallback
+
+    @staticmethod
+    def _context_get(ctx, key, default=None):
+        if isinstance(ctx, dict):
+            return ctx.get(key, default)
+        return getattr(ctx, key, default)
+
+    @staticmethod
+    def _context_set(ctx, key, value):
+        if isinstance(ctx, dict):
+            ctx[key] = value
+            return
+        setattr(ctx, key, value)
+
     def _get_session(self, req=None):
         """Get backend-agnostic session data from a signed cookie."""
         request_ref = req if req is not None else self._get_request()
-        ctx = request_ref.context
-
-        if isinstance(ctx, dict):
-            cached = ctx.get("_dash_auth_plus_session")
-        else:
-            cached = getattr(ctx, "_dash_auth_plus_session", None)
+        ctx = self._get_request_context(request_ref)
+        cached = self._context_get(ctx, "_dash_auth_plus_session")
         if cached is not None:
             return cached
 
@@ -182,10 +293,7 @@ class Auth(ABC):
                 )
                 session_data = {}
 
-        if isinstance(ctx, dict):
-            ctx["_dash_auth_plus_session"] = session_data
-        else:
-            setattr(ctx, "_dash_auth_plus_session", session_data)
+        self._context_set(ctx, "_dash_auth_plus_session", session_data)
         return session_data
 
     def _save_session(self, response, session_data):
@@ -225,6 +333,7 @@ class Auth(ABC):
 
         def before_request_auth():
             req = self._get_request()
+            req_path = self._normalized_request_path(getattr(req, "path", None))
             public_routes = get_public_routes(self.app)
             public_callbacks = get_public_callbacks(self.app)
 
@@ -232,17 +341,17 @@ class Auth(ABC):
             # * Check whether the callback is marked as public
             # * Check whether the callback is performed on route change in
             #   which case the path should be checked against the public routes
-            if req.path == "/_dash-update-component":
-                body = req.get_json()
+            if req_path == "/_dash-update-component":
+                body = self._get_callback_body_sync(req)
 
                 # Check whether the callback is marked as public
-                if body["output"] in public_callbacks:
+                if body.get("output") in public_callbacks:
                     return None
 
                 pathname = next(
                     (
                         inp.get("value")
-                        for inp in body["inputs"]
+                        for inp in body.get("inputs", [])
                         if isinstance(inp, dict) and inp.get("property") == "pathname"
                     ),
                     None,
@@ -264,21 +373,16 @@ class Auth(ABC):
                 # Check whether the callback has an input using the pathname,
                 # such a callback will be a routing callback and the pathname
                 # should be checked against the public routes
-                if not self.auth_protect_layouts:
-                    if (
-                        pathname
-                        and page_container_test
-                        and public_routes.test(pathname)
-                    ):
-                        return None
-                else:
-                    # protected by layout
-                    if pathname and page_container_test:
-                        return None
+                if (
+                    pathname
+                    and page_container_test
+                    and self._path_matches_map(public_routes, pathname)
+                ):
+                    return None
 
             # If the route is not a callback route, check whether the path
             # matches a public route, or whether the request is authorised
-            if public_routes.test(req.path) or self.is_authorized():
+            if self._path_matches_map(public_routes, req_path) or self.is_authorized():
                 return None
 
             # When auth_protect_layouts is enabled, avoid redirecting only for registered pages
@@ -288,28 +392,112 @@ class Auth(ABC):
                 page_paths, map_adapter = _get_page_paths_and_adapter()
 
                 # Check if req.path matches any page path
-                if req.path in page_paths:
+                if req_path in page_paths:
                     return None
 
                 # Check if req.path matches any page template
                 if map_adapter is not None:
                     try:
-                        map_adapter.match(req.path)
+                        map_adapter.match(req_path)
                         return None
                     except Exception:
                         pass
 
                 # Also allow Dash internal endpoints
-                if req.path in (
+                if req_path in (
                     "/_dash-layout",
                     "/_dash-dependencies",
-                ) or req.path.startswith("/_dash-component-suites/"):
+                ) or req_path.startswith("/_dash-component-suites/"):
                     return None
 
             # Otherwise, ask the user to log in
             return self.login_request()
 
-        register_hook(before_request_auth)
+        async def before_request_auth_async():
+            req = self._get_request()
+            req_path = self._normalized_request_path(getattr(req, "path", None))
+            public_routes = get_public_routes(self.app)
+            public_callbacks = get_public_callbacks(self.app)
+
+            # Handle Dash's callback route:
+            # * Check whether the callback is marked as public
+            # * Check whether the callback is performed on route change in
+            #   which case the path should be checked against the public routes
+            if req_path == "/_dash-update-component":
+                body = await self._get_callback_body_async(req)
+
+                # Check whether the callback is marked as public
+                if body.get("output") in public_callbacks:
+                    return None
+
+                pathname = next(
+                    (
+                        inp.get("value")
+                        for inp in body.get("inputs", [])
+                        if isinstance(inp, dict) and inp.get("property") == "pathname"
+                    ),
+                    None,
+                )
+                if self.page_container:
+                    page_container_test = next(
+                        (
+                            out
+                            for out in body.get("outputs", [])
+                            if isinstance(out, dict)
+                            and out.get("id") == self.page_container
+                            and out.get("property") == "children"
+                        ),
+                        None,
+                    )
+                else:
+                    page_container_test = True
+
+                # Check whether the callback has an input using the pathname,
+                # such a callback will be a routing callback and the pathname
+                # should be checked against the public routes
+                if (
+                    pathname
+                    and page_container_test
+                    and self._path_matches_map(public_routes, pathname)
+                ):
+                    return None
+
+            # If the route is not a callback route, check whether the path
+            # matches a public route, or whether the request is authorised
+            if self._path_matches_map(public_routes, req_path) or self.is_authorized():
+                return None
+
+            # When auth_protect_layouts is enabled, avoid redirecting only for registered pages
+            if self.auth_protect_layouts:
+                # Use cached data derived from page_registry to avoid
+                # recomputing these structures on every request.
+                page_paths, map_adapter = _get_page_paths_and_adapter()
+
+                # Check if req.path matches any page path
+                if req_path in page_paths:
+                    return None
+
+                # Check if req.path matches any page template
+                if map_adapter is not None:
+                    try:
+                        map_adapter.match(req_path)
+                        return None
+                    except Exception:
+                        pass
+
+                # Also allow Dash internal endpoints
+                if req_path in (
+                    "/_dash-layout",
+                    "/_dash-dependencies",
+                ) or req_path.startswith("/_dash-component-suites/"):
+                    return None
+
+            # Otherwise, ask the user to log in
+            return self.login_request()
+        if getattr(self.app.backend, "server_type", None) == "quart":
+            register_hook(before_request_auth_async)
+        else:
+            register_hook(before_request_auth)
 
     @abstractmethod
     def is_authorized(self):
