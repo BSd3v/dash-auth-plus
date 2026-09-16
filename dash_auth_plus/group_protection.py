@@ -96,6 +96,7 @@ def check_groups(
     groups_str_split: str = None,
     check_type: CheckType = "one_of",
     group_lookup: dict = None,
+    runtime_lookup: dict = None,
     restricted_users: Optional[Union[Callable, List[str]]] = None,
     restricted_users_lookup: dict = None,
     user_session_key: str = "email",
@@ -121,6 +122,9 @@ def check_groups(
         e.g. {"path": "/test"} will work with this as a
         groups function: check_path(path). If ``group_lookup`` already contains
         ``path``, that explicit value is used instead of ``path=...``.
+    :param runtime_lookup: Runtime kwargs collected from the wrapped
+        layout/callback invocation. These are merged with ``group_lookup``
+        when calling a callable ``groups`` function.
     :param restricted_users: List of restricted users or a python function
         to return a list of users.
          If this is a function, will be called with
@@ -181,7 +185,8 @@ def check_groups(
             param_path = next((p for p in params.values() if p.name == "path"), None)
             if param_path is not None and param_path.default is Parameter.empty:
                 requires_path = True
-        kwargs = dict(group_lookup or {})
+        kwargs = dict(runtime_lookup or {})
+        kwargs.update(group_lookup or {})
         if has_posonly_path and "path" in kwargs:
             raise TypeError(
                 "The 'groups' callable defines a positional-only 'path' parameter, "
@@ -293,6 +298,7 @@ def protected(
                     groups_str_split=groups_str_split,
                     check_type=check_type,
                     group_lookup=group_lookup,
+                    runtime_lookup=kwargs,
                     restricted_users=restricted_users,
                     restricted_users_lookup=restricted_users_lookup,
                     user_session_key=user_session_key,
@@ -318,6 +324,7 @@ def protected(
                     groups_str_split=groups_str_split,
                     check_type=check_type,
                     group_lookup=group_lookup,
+                    runtime_lookup=kwargs,
                     restricted_users=restricted_users,
                     restricted_users_lookup=restricted_users_lookup,
                     user_session_key=user_session_key,
