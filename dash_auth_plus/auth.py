@@ -163,7 +163,10 @@ class Auth(ABC):
             return view_func
 
         try:
-            from dash.backends._fastapi import set_current_request, reset_current_request
+            from dash.backends._fastapi import (
+                set_current_request,
+                reset_current_request,
+            )
         except Exception:
             return view_func
 
@@ -494,6 +497,7 @@ class Auth(ABC):
 
             # Otherwise, ask the user to log in
             return self.login_request()
+
         if getattr(self.app.backend, "server_type", None) == "quart":
             register_hook(before_request_auth_async)
         else:

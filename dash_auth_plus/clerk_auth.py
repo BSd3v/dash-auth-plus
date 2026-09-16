@@ -234,7 +234,8 @@ class ClerkAuth(Auth):
             self._set_secret_key(secret_key)
 
         if self._get_secret_key() is None:
-            raise RuntimeError("""
+            raise RuntimeError(
+                """
                 app.server.secret_key is missing.
                 Generate a secret key in your Python session
                 with the following commands:
@@ -247,7 +248,8 @@ class ClerkAuth(Auth):
                 Note that you should not do this dynamically:
                 you should create a key and then assign the value of
                 that key in your code/via a secret.
-                """)
+                """
+            )
 
         if secure_session:
             self._set_config_value("SESSION_COOKIE_SECURE", True)
@@ -262,7 +264,10 @@ class ClerkAuth(Auth):
 
         if getattr(app.backend, "server_type", None) == "fastapi":
             from fastapi import Request as FastAPIRequest
-            from dash.backends._fastapi import set_current_request, reset_current_request
+            from dash.backends._fastapi import (
+                set_current_request,
+                reset_current_request,
+            )
 
             def logout_view(request: FastAPIRequest):
                 token = set_current_request(request)
@@ -662,7 +667,9 @@ class ClerkAuth(Auth):
         if "Authorization" not in headers and headers.get("authorization"):
             headers["Authorization"] = headers.get("authorization")
         session_token = self._select_session_token(req)
-        has_auth_header = bool(headers.get("Authorization") or headers.get("authorization"))
+        has_auth_header = bool(
+            headers.get("Authorization") or headers.get("authorization")
+        )
         if session_token and not has_auth_header:
             headers["Authorization"] = f"Bearer {session_token}"
 
@@ -719,7 +726,9 @@ class ClerkAuth(Auth):
             session_data = self._get_session(req)
         except Exception as e:
             logging.error(
-                "Error getting session data during logout: %s\n%s", e, traceback.format_exc()
+                "Error getting session data during logout: %s\n%s",
+                e,
+                traceback.format_exc(),
             )
             session_data = {}
         session_sid = session_data.get("sid")
@@ -765,7 +774,8 @@ class ClerkAuth(Auth):
                     )
         session_data.clear()
         response = self.app.backend.make_response(
-            self.logout_page or f"""
+            self.logout_page
+            or f"""
         <div style="display: flex; flex-direction: column;
         gap: 0.75rem; padding: 3rem 5rem;">
             <div>Logged out successfully</div>
