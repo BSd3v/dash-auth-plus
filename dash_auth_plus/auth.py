@@ -76,6 +76,7 @@ class Auth(ABC):
             raise TypeError(f"Auth got unexpected keyword arguments: {list(obsolete)}")
 
         self.app = app
+        setattr(self.app, "_dash_auth_plus_auth", self)
         self._protect()
         self.auth_protect_layouts = auth_protect_layouts
         self.page_container = page_container
