@@ -23,6 +23,8 @@ BASE_PUBLIC_ROUTES = [
 ]
 PUBLIC_ROUTES = "PUBLIC_ROUTES"
 PUBLIC_CALLBACKS = "PUBLIC_CALLBACKS"
+PUBLIC_ROUTES_ATTR = "_dash_auth_plus_public_routes"
+PUBLIC_CALLBACKS_ATTR = "_dash_auth_plus_public_callbacks"
 
 
 def add_public_routes(app: Dash, routes: list):
@@ -55,14 +57,14 @@ def add_public_routes(app: Dash, routes: list):
     for route in routes:
         public_routes.map.add(Rule(route))
 
-    app.server.config[PUBLIC_ROUTES] = public_routes
+    setattr(app, PUBLIC_ROUTES_ATTR, public_routes)
 
 
 def public_callback(*callback_args, **callback_kwargs):
     """Public Dash callback.
 
     This works by adding the callback id (from the callback map) to a list
-    of whitelisted callbacks in the Flask server's config.
+    of allowed callbacks on the Dash app object.
 
     :param **: all args and kwargs passed to a dash callback
     """
@@ -80,9 +82,9 @@ def public_callback(*callback_args, **callback_kwargs):
                 None,
             )
             app = get_app()
-            app.server.config[PUBLIC_CALLBACKS] = get_public_callbacks(app) + [
-                callback_id
-            ]
+            setattr(
+                app, PUBLIC_CALLBACKS_ATTR, get_public_callbacks(app) + [callback_id]
+            )
         except Exception:
             print(
                 "Could not set up the public callback as the Dash object "
@@ -99,9 +101,9 @@ def public_callback(*callback_args, **callback_kwargs):
 
 def get_public_routes(app: Dash) -> MapAdapter:
     """Retrieve the public routes."""
-    return app.server.config.get(PUBLIC_ROUTES, Map([]).bind(""))
+    return getattr(app, PUBLIC_ROUTES_ATTR, Map([]).bind(""))
 
 
 def get_public_callbacks(app: Dash) -> list:
     """Retrieve the public callbacks ids."""
-    return app.server.config.get(PUBLIC_CALLBACKS, [])
+    return getattr(app, PUBLIC_CALLBACKS_ATTR, [])
