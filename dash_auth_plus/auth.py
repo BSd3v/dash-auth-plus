@@ -520,7 +520,7 @@ class Auth(ABC):
             # Otherwise, ask the user to log in
             return self.login_request()
 
-        if getattr(self.app.backend, "server_type", None) == "quart":
+        if getattr(self.app.backend, "server_type", None) in {"quart", "fastapi"}:
             register_hook(before_request_auth_async)
         else:
             register_hook(before_request_auth)

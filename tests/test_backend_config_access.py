@@ -22,6 +22,14 @@ class DummyAuth(Auth):
         return None
 
 
+class DenyAuth(Auth):
+    def is_authorized(self):
+        return False
+
+    def login_request(self):
+        return "login"
+
+
 def test_auth_config_helpers_support_non_flask_server_config():
     auth = object.__new__(DummyAuth)
     auth.app = SimpleNamespace(
@@ -110,7 +118,7 @@ def test_auth_protect_layouts_allows_page_container_routing_callbacks():
     app = SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend)
 
     with patch("dash_auth_plus.auth.protect_layouts"):
-        auth = DummyAuth(
+        auth = DenyAuth(
             app,
             auth_protect_layouts=True,
             page_container="_pages_content",
@@ -150,3 +158,27 @@ def test_oidc_auth_accepts_fastapi_backend():
         "oidc_logout",
         "oidc_callback",
     ]
+
+
+def test_fastapi_backend_uses_async_callback_hook():
+    captured = {}
+
+    async def get_json():
+        return {
+            "inputs": [{"property": "pathname", "value": "/public"}],
+            "outputs": [{"id": "_pages_content", "property": "children"}],
+        }
+
+    request = SimpleNamespace(path="/_dash-update-component", get_json=get_json)
+    backend = SimpleNamespace(
+        server_type="fastapi",
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend)
+    add_public_routes(app, ["/public"])
+
+    auth = DenyAuth(app, page_container="_pages_content")
+
+    assert auth is app._dash_auth_plus_auth
+    assert asyncio.run(captured["hook"]()) is None

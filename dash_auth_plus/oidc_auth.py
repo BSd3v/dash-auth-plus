@@ -320,9 +320,6 @@ class OIDCAuth(Auth):
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
-        session_data = self._get_session()
-        session_data.clear()
-        self._clear_flask_session()
         base_url = self.app.config.get("url_base_pathname") or "/"
         page = self.logout_page or f"""
         <div style="display: flex; flex-direction: column;
@@ -335,6 +332,9 @@ class OIDCAuth(Auth):
             response = self.app.backend.make_response(page, content_type="text/html")
         else:
             response = page
+        session_data = self._get_session()
+        session_data.clear()
+        self._clear_flask_session()
         return self._clear_session(response)
 
     def callback(self, idp: str):  # pylint: disable=C0116
