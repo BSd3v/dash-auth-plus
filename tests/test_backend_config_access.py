@@ -1,4 +1,6 @@
 import asyncio
+import sys
+import types
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
@@ -8,6 +10,7 @@ from flask import Flask, session
 from werkzeug.routing import Map, Rule
 
 from dash_auth_plus.auth import Auth
+from dash_auth_plus.oidc_auth import OIDCAuth
 from dash_auth_plus.public_routes import add_public_routes, get_public_routes
 
 
@@ -115,3 +118,35 @@ def test_auth_protect_layouts_allows_page_container_routing_callbacks():
 
     assert auth is app._dash_auth_plus_auth
     assert captured["hook"]() is None
+
+
+def test_oidc_auth_accepts_fastapi_backend():
+    added_routes = []
+    backend = SimpleNamespace(
+        server_type="fastapi",
+        before_request=lambda func: None,
+        add_url_rule=lambda *args, **kwargs: added_routes.append((args, kwargs)),
+    )
+    app = SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend)
+    fake_oauth = SimpleNamespace(_registry={}, _clients={})
+    fake_fastapi = types.SimpleNamespace(Request=object)
+    fake_dash_fastapi = types.SimpleNamespace(
+        set_current_request=lambda request: "token",
+        reset_current_request=lambda token: None,
+    )
+
+    with patch("dash_auth_plus.oidc_auth.OAuth", return_value=fake_oauth):
+        with patch.dict(
+            sys.modules,
+            {
+                "fastapi": fake_fastapi,
+                "dash.backends._fastapi": fake_dash_fastapi,
+            },
+        ):
+            OIDCAuth(app, secret_key="Test")
+
+    assert [kwargs["endpoint"] for _, kwargs in added_routes] == [
+        "oidc_login",
+        "oidc_logout",
+        "oidc_callback",
+    ]

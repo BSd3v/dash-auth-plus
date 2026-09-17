@@ -104,15 +104,16 @@ class OIDCAuth(Auth):
         if idp_selection_route:
             public_routes = [idp_selection_route, *public_routes]
 
-        # OIDCAuth relies on the Flask-specific authlib integration and
-        # Flask's session/cookie mechanism.  Raise early if a non-Flask
-        # backend is in use so the user gets a clear error message.
-        if hasattr(app, "backend") and app.backend.server_type != "flask":
+        supported_backends = {"flask", "fastapi"}
+        if (
+            hasattr(app, "backend")
+            and app.backend.server_type not in supported_backends
+        ):
             raise RuntimeError(
-                "OIDCAuth requires a Flask backend. "
+                "OIDCAuth requires a Flask or FastAPI backend. "
                 f"Detected backend: '{app.backend.server_type}'. "
-                "Pass a Flask server to Dash() or omit the `backend` argument "
-                "to use the default Flask backend."
+                "Pass a Flask/FastAPI server to Dash() or omit the `backend` "
+                "argument to use the default Flask backend."
             )
 
         super().__init__(
