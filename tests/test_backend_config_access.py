@@ -7,9 +7,11 @@ from unittest.mock import patch
 
 from dash import Dash
 from flask import Flask, session
+from itsdangerous import URLSafeSerializer
 from werkzeug.routing import Map, Rule
 
 from dash_auth_plus.auth import Auth
+from dash_auth_plus.clerk_auth import ClerkAuth
 from dash_auth_plus.oidc_auth import OIDCAuth
 from dash_auth_plus.public_routes import add_public_routes, get_public_routes
 
@@ -182,3 +184,18 @@ def test_fastapi_backend_uses_async_callback_hook():
 
     assert auth is app._dash_auth_plus_auth
     assert asyncio.run(captured["hook"]()) is None
+
+
+def test_clerk_auth_uses_base_session_loader_with_custom_serializer():
+    auth = object.__new__(ClerkAuth)
+    auth.app = SimpleNamespace(config={}, server=SimpleNamespace())
+    auth._clerk_session_serializer = URLSafeSerializer(
+        "test-secret",
+        salt="dash-auth-plus-clerk-session",
+    )
+    payload = {"user": {"email": "a.b@mail.com"}}
+    request = SimpleNamespace(
+        cookies={"dash_auth_plus_session": auth._clerk_session_serializer.dumps(payload)}
+    )
+
+    assert auth._get_session(request) == payload

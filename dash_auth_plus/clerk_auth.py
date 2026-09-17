@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Union, Callable
 import dash
 from dash_auth_plus.auth import Auth, _get_page_paths_and_adapter
 from dotenv import load_dotenv
-from itsdangerous import BadSignature, URLSafeSerializer
+from itsdangerous import URLSafeSerializer
 from urllib.parse import urljoin, quote, unquote, urlparse
 from werkzeug.routing import Rule, Map
 
@@ -253,12 +253,10 @@ class ClerkAuth(Auth):
             self._set_config_value("SESSION_COOKIE_SECURE", True)
             self._set_config_value("SESSION_COOKIE_HTTPONLY", True)
 
-        self.session_cookie_name = "dash_auth_plus_session"
-        self.session_serializer = URLSafeSerializer(
+        self._clerk_session_serializer = URLSafeSerializer(
             self._get_secret_key(),
             salt="dash-auth-plus-clerk-session",
         )
-        self.session_cookie_secure = secure_session
 
         if getattr(app.backend, "server_type", None) == "fastapi":
             from fastapi import Request as FastAPIRequest
@@ -534,48 +532,15 @@ class ClerkAuth(Auth):
         ):
             del session_data["url"]
 
-    def _get_session(self, req=None):
-        """Return backend-agnostic session data cached in the request context."""
-        req = req if req is not None else self._get_request()
-        ctx = self._get_request_context(req)
-        cached = self._context_get(ctx, "_dash_auth_plus_session")
-        if cached is not None:
-            return cached
-
-        raw = req.cookies.get(self.session_cookie_name)
-        if not raw:
-            session_data = {}
-        else:
-            try:
-                data = self.session_serializer.loads(raw)
-                session_data = data if isinstance(data, dict) else {}
-            except BadSignature:
-                logging.warning(
-                    "Discarding tampered %s cookie due to invalid signature.",
-                    self.session_cookie_name,
-                )
-                session_data = {}
-        self._context_set(ctx, "_dash_auth_plus_session", session_data)
-        return session_data
+    def _get_session_serializer(self):
+        return self._clerk_session_serializer
 
     def _set_session_cookie(self, response, session_data):
         """Persist the current session data as a signed auth cookie."""
-        response.set_cookie(
-            self.session_cookie_name,
-            self.session_serializer.dumps(session_data),
-            secure=self.session_cookie_secure,
-            httponly=True,
-            samesite="Lax",
-            path=self.app.config.get("url_base_pathname") or "/",
-        )
-        return response
+        return self._save_session(response, session_data)
 
     def _clear_session_cookie(self, response):
-        response.delete_cookie(
-            self.session_cookie_name,
-            path=self.app.config.get("url_base_pathname") or "/",
-        )
-        return response
+        return self._clear_session(response)
 
     def _clear_clerk_cookies(self, response, req):
         """Best-effort deletion of auth cookies present on this app domain."""
@@ -590,7 +555,7 @@ class ClerkAuth(Auth):
                 )
                 continue
             if (
-                cookie == self.session_cookie_name
+                cookie == self._session_cookie_name
                 or cookie.startswith("__clerk")
                 or cookie == "__session"
                 or cookie.startswith("__session_")
