@@ -310,8 +310,8 @@ class Auth(ABC):
         if not has_request_context():
             return
 
-        for key, value in session_data.items():
-            flask_session[key] = value
+        flask_session.clear()
+        flask_session.update(session_data)
 
     @staticmethod
     def _clear_flask_session():
@@ -322,6 +322,11 @@ class Auth(ABC):
 
         if has_request_context():
             flask_session.clear()
+
+    def _clear_request_session(self, req=None):
+        request_ref = req if req is not None else self._get_request()
+        ctx = self._get_request_context(request_ref)
+        self._context_set(ctx, "_dash_auth_plus_session", {})
 
     def _save_session(self, response, session_data):
         """Persist backend-agnostic session data in a signed cookie."""

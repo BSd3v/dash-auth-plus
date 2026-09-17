@@ -103,6 +103,30 @@ def test_sync_flask_session_helpers_support_flask_request_context():
         assert "idp" not in session
 
 
+def test_sync_flask_session_replaces_existing_keys():
+    auth = cast(Any, object.__new__(DummyAuth))
+    auth.app = SimpleNamespace(config={}, server=SimpleNamespace())
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    with app.test_request_context("/", method="GET"):
+        session["refresh_token"] = "stale"
+        auth._sync_flask_session({"user": {"email": "a.b@mail.com"}})
+        assert session["user"]["email"] == "a.b@mail.com"
+        assert "refresh_token" not in session
+
+
+def test_clear_request_session_resets_cached_session():
+    auth = cast(Any, object.__new__(DummyAuth))
+    auth.app = SimpleNamespace(config={}, server=SimpleNamespace())
+    request = SimpleNamespace(context={})
+
+    auth._context_set(request.context, "_dash_auth_plus_session", {"user": {"id": 1}})
+    auth._clear_request_session(request)
+
+    assert auth._context_get(request.context, "_dash_auth_plus_session") == {}
+
+
 def test_auth_protect_layouts_allows_page_container_routing_callbacks():
     captured = {}
     request = SimpleNamespace(

@@ -334,6 +334,7 @@ class OIDCAuth(Auth):
             response = page
         session_data = self._get_session()
         session_data.clear()
+        self._clear_request_session()
         self._clear_flask_session()
         return self._clear_session(response)
 
