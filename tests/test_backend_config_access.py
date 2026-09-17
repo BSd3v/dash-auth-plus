@@ -1,6 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 from dash import Dash
 from flask import Flask, session
@@ -87,3 +88,30 @@ def test_sync_flask_session_helpers_support_flask_request_context():
         auth._clear_flask_session()
         assert "user" not in session
         assert "idp" not in session
+
+
+def test_auth_protect_layouts_allows_page_container_routing_callbacks():
+    captured = {}
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=lambda: {
+            "inputs": [{"property": "pathname", "value": "/private"}],
+            "outputs": [{"id": "_pages_content", "property": "children"}],
+        },
+    )
+    backend = SimpleNamespace(
+        server_type="flask",
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend)
+
+    with patch("dash_auth_plus.auth.protect_layouts"):
+        auth = DummyAuth(
+            app,
+            auth_protect_layouts=True,
+            page_container="_pages_content",
+        )
+
+    assert auth is app._dash_auth_plus_auth
+    assert captured["hook"]() is None

@@ -400,12 +400,11 @@ class Auth(ABC):
                 # Check whether the callback has an input using the pathname,
                 # such a callback will be a routing callback and the pathname
                 # should be checked against the public routes
-                if (
-                    pathname
-                    and page_container_test
-                    and self._path_matches_map(public_routes, pathname)
-                ):
-                    return None
+                if pathname and page_container_test:
+                    if self.auth_protect_layouts or self._path_matches_map(
+                        public_routes, pathname
+                    ):
+                        return None
 
             # If the route is not a callback route, check whether the path
             # matches a public route, or whether the request is authorised
@@ -482,12 +481,11 @@ class Auth(ABC):
                 # Check whether the callback has an input using the pathname,
                 # such a callback will be a routing callback and the pathname
                 # should be checked against the public routes
-                if (
-                    pathname
-                    and page_container_test
-                    and self._path_matches_map(public_routes, pathname)
-                ):
-                    return None
+                if pathname and page_container_test:
+                    if self.auth_protect_layouts or self._path_matches_map(
+                        public_routes, pathname
+                    ):
+                        return None
 
             # If the route is not a callback route, check whether the path
             # matches a public route, or whether the request is authorised
