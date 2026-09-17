@@ -300,6 +300,29 @@ class Auth(ABC):
         self._context_set(ctx, "_dash_auth_plus_session", session_data)
         return session_data
 
+    @staticmethod
+    def _sync_flask_session(session_data):
+        try:
+            from flask import has_request_context, session as flask_session
+        except Exception:
+            return
+
+        if not has_request_context():
+            return
+
+        for key, value in session_data.items():
+            flask_session[key] = value
+
+    @staticmethod
+    def _clear_flask_session():
+        try:
+            from flask import has_request_context, session as flask_session
+        except Exception:
+            return
+
+        if has_request_context():
+            flask_session.clear()
+
     def _save_session(self, response, session_data):
         """Persist backend-agnostic session data in a signed cookie."""
         serializer = self._get_session_serializer()

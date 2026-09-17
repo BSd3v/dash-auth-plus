@@ -111,6 +111,7 @@ class BasicAuth(Auth):
                     session_data["user"]["groups"] = self._user_groups(username)
                 elif self._user_groups:
                     session_data["user"]["groups"] = self._user_groups.get(username, [])
+                self._sync_flask_session(session_data)
             except RuntimeError:
                 logging.warning("Session is not available. Have you set a secret key?")
         return authorized

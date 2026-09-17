@@ -321,6 +321,7 @@ class OIDCAuth(Auth):
         """Logout the user."""
         session_data = self._get_session()
         session_data.clear()
+        self._clear_flask_session()
         base_url = self.app.config.get("url_base_pathname") or "/"
         page = self.logout_page or f"""
         <div style="display: flex; flex-direction: column;
@@ -381,6 +382,7 @@ class OIDCAuth(Auth):
                 session_data["refresh_token"] = token.get("refresh_token")
             if self.log_signins:
                 logging.info("User %s is logging in.", user.get("email"))
+            self._sync_flask_session(session_data)
         response = self._redirect_response(
             self.app.config.get("url_base_pathname") or "/"
         )

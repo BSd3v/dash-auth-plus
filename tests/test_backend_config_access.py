@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from dash import Dash
+from flask import Flask, session
 from werkzeug.routing import Map, Rule
 
 from dash_auth_plus.auth import Auth
@@ -70,3 +71,19 @@ def test_get_callback_body_async_awaits_quart_style_get_json():
 
     body = asyncio.run(auth._get_callback_body_async(AsyncReq()))
     assert body == {"output": "x", "inputs": []}
+
+
+def test_sync_flask_session_helpers_support_flask_request_context():
+    auth = cast(Any, object.__new__(DummyAuth))
+    auth.app = SimpleNamespace(config={}, server=SimpleNamespace())
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    with app.test_request_context("/", method="GET"):
+        auth._sync_flask_session({"user": {"email": "a.b@mail.com"}, "idp": "oidc"})
+        assert session["user"]["email"] == "a.b@mail.com"
+        assert session["idp"] == "oidc"
+
+        auth._clear_flask_session()
+        assert "user" not in session
+        assert "idp" not in session
