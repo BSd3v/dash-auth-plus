@@ -28,6 +28,7 @@ def get_protected_callbacks(app: dash.Dash) -> list:
     """Retrieve callback ids registered through protected_callback."""
     return getattr(app, PROTECTED_CALLBACKS_ATTR, [])
 
+
 OutputVal = Union[Callable[..., Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
 
