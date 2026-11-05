@@ -104,15 +104,16 @@ class OIDCAuth(Auth):
         if idp_selection_route:
             public_routes = [idp_selection_route, *public_routes]
 
-        # OIDCAuth relies on the Flask-specific authlib integration and
-        # Flask's session/cookie mechanism.  Raise early if a non-Flask
-        # backend is in use so the user gets a clear error message.
-        if hasattr(app, "backend") and app.backend.server_type != "flask":
+        supported_backends = {"flask", "fastapi"}
+        if (
+            hasattr(app, "backend")
+            and app.backend.server_type not in supported_backends
+        ):
             raise RuntimeError(
-                "OIDCAuth requires a Flask backend. "
+                "OIDCAuth requires a Flask or FastAPI backend. "
                 f"Detected backend: '{app.backend.server_type}'. "
-                "Pass a Flask server to Dash() or omit the `backend` argument "
-                "to use the default Flask backend."
+                "Pass a Flask/FastAPI server to Dash() or omit the `backend` "
+                "argument to use the default Flask backend."
             )
 
         super().__init__(
@@ -319,8 +320,6 @@ class OIDCAuth(Auth):
 
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
-        session_data = self._get_session()
-        session_data.clear()
         base_url = self.app.config.get("url_base_pathname") or "/"
         page = self.logout_page or f"""
         <div style="display: flex; flex-direction: column;
@@ -333,6 +332,10 @@ class OIDCAuth(Auth):
             response = self.app.backend.make_response(page, content_type="text/html")
         else:
             response = page
+        session_data = self._get_session()
+        session_data.clear()
+        self._clear_request_session()
+        self._clear_flask_session()
         return self._clear_session(response)
 
     def callback(self, idp: str):  # pylint: disable=C0116
@@ -381,6 +384,7 @@ class OIDCAuth(Auth):
                 session_data["refresh_token"] = token.get("refresh_token")
             if self.log_signins:
                 logging.info("User %s is logging in.", user.get("email"))
+            self._sync_flask_session(session_data)
         response = self._redirect_response(
             self.app.config.get("url_base_pathname") or "/"
         )

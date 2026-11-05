@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -392,3 +393,52 @@ def test_gp015_callable_groups_posonly_path_in_lookup_raises_clear_error():
 
         with pytest.raises(TypeError, match="positional-only 'path' parameter"):
             check_groups(groups_with_posonly_path, group_lookup={"path": "/from-lookup"})
+
+
+def test_gp016_list_groups_falls_back_to_dash_auth_session():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    fake_dash_app = SimpleNamespace(
+        _dash_auth_plus_auth=SimpleNamespace(
+            _get_session=lambda: {
+                "user": {
+                    "email": "a.b@mail.com",
+                    "groups": ["admin"],
+                    "tenant": "ABC",
+                }
+            }
+        )
+    )
+
+    with app.test_request_context("/", method="GET"):
+        with patch(
+            "dash_auth_plus.group_protection.dash.get_app",
+            return_value=fake_dash_app,
+        ):
+            assert list_groups() == ["admin"]
+            assert list_groups(groups_key="tenant", groups_str_split=",") == ["ABC"]
+
+
+def test_gp017_check_groups_falls_back_to_dash_auth_session():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    fake_dash_app = SimpleNamespace(
+        _dash_auth_plus_auth=SimpleNamespace(
+            _get_session=lambda: {
+                "user": {
+                    "email": "a.b@mail.com",
+                    "groups": ["admin"],
+                }
+            }
+        )
+    )
+
+    with app.test_request_context("/", method="GET"):
+        with patch(
+            "dash_auth_plus.group_protection.dash.get_app",
+            return_value=fake_dash_app,
+        ):
+            assert check_groups(["admin"]) is True
+            assert check_groups(["viewer"]) is False

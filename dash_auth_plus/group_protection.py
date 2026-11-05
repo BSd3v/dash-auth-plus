@@ -77,15 +77,38 @@ def list_groups(
         * None if the user is not authenticated
         * list[str] otherwise
     """
-    if not has_request_context() or "user" not in session:
+    user = _get_session_user()
+    if user is None:
         return None
 
-    user_groups = session.get("user", {}).get(groups_key, [])
+    user_groups = user.get(groups_key, [])
     # Handle cases where groups are ,- or ;-separated string,
     # may depend on OIDC provider
     if isinstance(user_groups, str) and groups_str_split is not None:
         user_groups = re.split(groups_str_split, user_groups)
     return user_groups
+
+
+def _get_session_user():
+    if has_request_context() and "user" in session:
+        return session.get("user")
+
+    try:
+        app = dash.get_app()
+    except Exception:
+        return None
+
+    auth = getattr(app, "_dash_auth_plus_auth", None)
+    if auth is None:
+        return None
+
+    try:
+        session_data = auth._get_session()
+    except Exception:
+        return None
+
+    user = session_data.get("user")
+    return user if isinstance(user, dict) else None
 
 
 def check_groups(
@@ -154,7 +177,8 @@ def check_groups(
     if restricted_users:
         if callable(restricted_users):
             restricted_users = restricted_users(**(restricted_users_lookup or {}))
-        if session["user"][user_session_key] in restricted_users:
+        user = _get_session_user() or {}
+        if user.get(user_session_key) in restricted_users:
             # User is restricted
             return False
     if callable(groups):

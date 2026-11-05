@@ -76,6 +76,7 @@ class Auth(ABC):
             raise TypeError(f"Auth got unexpected keyword arguments: {list(obsolete)}")
 
         self.app = app
+        setattr(self.app, "_dash_auth_plus_auth", self)
         self._protect()
         self.auth_protect_layouts = auth_protect_layouts
         self.page_container = page_container
@@ -311,6 +312,34 @@ class Auth(ABC):
         self._context_set(ctx, "_dash_auth_plus_session", session_data)
         return session_data
 
+    @staticmethod
+    def _sync_flask_session(session_data):
+        try:
+            from flask import has_request_context, session as flask_session
+        except Exception:
+            return
+
+        if not has_request_context():
+            return
+
+        flask_session.clear()
+        flask_session.update(session_data)
+
+    @staticmethod
+    def _clear_flask_session():
+        try:
+            from flask import has_request_context, session as flask_session
+        except Exception:
+            return
+
+        if has_request_context():
+            flask_session.clear()
+
+    def _clear_request_session(self, req=None):
+        request_ref = req if req is not None else self._get_request()
+        ctx = self._get_request_context(request_ref)
+        self._context_set(ctx, "_dash_auth_plus_session", {})
+
     def _save_session(self, response, session_data):
         """Persist backend-agnostic session data in a signed cookie."""
         serializer = self._get_session_serializer()
@@ -392,12 +421,11 @@ class Auth(ABC):
                 # Check whether the callback has an input using the pathname,
                 # such a callback will be a routing callback and the pathname
                 # should be checked against the public routes
-                if (
-                    pathname
-                    and page_container_test
-                    and self._path_matches_map(public_routes, pathname)
-                ):
-                    return None
+                if pathname and page_container_test:
+                    if self.auth_protect_layouts or self._path_matches_map(
+                        public_routes, pathname
+                    ):
+                        return None
 
             # If the route is not a callback route, check whether the path
             # matches a public route, or whether the request is authorised
@@ -478,12 +506,11 @@ class Auth(ABC):
                 # Check whether the callback has an input using the pathname,
                 # such a callback will be a routing callback and the pathname
                 # should be checked against the public routes
-                if (
-                    pathname
-                    and page_container_test
-                    and self._path_matches_map(public_routes, pathname)
-                ):
-                    return None
+                if pathname and page_container_test:
+                    if self.auth_protect_layouts or self._path_matches_map(
+                        public_routes, pathname
+                    ):
+                        return None
 
             # If the route is not a callback route, check whether the path
             # matches a public route, or whether the request is authorised
@@ -518,7 +545,7 @@ class Auth(ABC):
             # Otherwise, ask the user to log in
             return self.login_request()
 
-        if getattr(self.app.backend, "server_type", None) == "quart":
+        if getattr(self.app.backend, "server_type", None) in {"quart", "fastapi"}:
             register_hook(before_request_auth_async)
         else:
             register_hook(before_request_auth)
