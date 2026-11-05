@@ -1,9 +1,11 @@
 import base64
+import binascii
 import logging
 from typing import Dict, List, Optional, Union, Callable
 from dash import Dash
 
 from .auth import Auth
+from .public_routes import get_public_callbacks
 
 UserGroups = Dict[str, List[str]]
 
@@ -86,14 +88,33 @@ class BasicAuth(Auth):
                     else {k: v for k, v in username_password_list}
                 )
 
+    def _protect(self):
+        super()._protect()
+        if getattr(self.app.backend, "server_type", None) not in {"quart", "fastapi"}:
+            return
+
+        async def authenticate_public_callback():
+            req = self._get_request()
+            if self._normalized_request_path(req.path) == "/_dash-update-component":
+                body = await self._get_callback_body_async(req)
+                if body.get("output") in get_public_callbacks(self.app):
+                    self.is_authorized()
+
+        self.app.backend.before_request(authenticate_public_callback)
+
     def is_authorized(self):
         req = self._get_request()
         header = req.headers.get("Authorization")
         if not header:
             return False
-        username_password = base64.b64decode(header.split("Basic ")[1])
-        username_password_utf8 = username_password.decode("utf-8")
-        username, password = username_password_utf8.split(":", 1)
+        try:
+            scheme, credentials = header.split(" ", 1)
+            if scheme.lower() != "basic":
+                return False
+            username_password = base64.b64decode(credentials, validate=True)
+            username, password = username_password.decode("utf-8").split(":", 1)
+        except (ValueError, binascii.Error):
+            return False
         authorized = False
         if self._auth_func is not None:
             try:
