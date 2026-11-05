@@ -105,25 +105,22 @@ class BasicAuth(Auth):
     def is_authorized(self):
         req = self._get_request()
         header = req.headers.get("Authorization")
-        if not header:
-            return False
-        try:
-            scheme, credentials = header.split(" ", 1)
-            if scheme.lower() != "basic":
-                return False
-            username_password = base64.b64decode(credentials, validate=True)
-            username, password = username_password.decode("utf-8").split(":", 1)
-        except (ValueError, binascii.Error):
-            return False
         authorized = False
-        if self._auth_func is not None:
+        if header:
             try:
-                authorized = self._auth_func(username, password)
-            except Exception:
-                logging.exception("Error in authorization function.")
-                return False
-        else:
-            authorized = self._users.get(username) == password
+                scheme, credentials = header.split(" ", 1)
+                if scheme.lower() == "basic":
+                    username_password = base64.b64decode(credentials, validate=True)
+                    username, password = username_password.decode("utf-8").split(":", 1)
+                    if self._auth_func is not None:
+                        try:
+                            authorized = self._auth_func(username, password)
+                        except Exception:
+                            logging.exception("Error in authorization function.")
+                    else:
+                        authorized = self._users.get(username) == password
+            except (ValueError, binascii.Error):
+                pass
         if authorized:
             try:
                 session_data = self._get_session(req)
@@ -133,6 +130,12 @@ class BasicAuth(Auth):
                 elif self._user_groups:
                     session_data["user"]["groups"] = self._user_groups.get(username, [])
                 self._sync_flask_session(session_data)
+            except RuntimeError:
+                logging.warning("Session is not available. Have you set a secret key?")
+        else:
+            self._clear_request_session(req)
+            try:
+                self._clear_flask_session()
             except RuntimeError:
                 logging.warning("Session is not available. Have you set a secret key?")
         return authorized
