@@ -21,6 +21,13 @@ from functools import lru_cache
 
 from .public_routes import PUBLIC_CALLBACKS_ATTR, get_public_callbacks
 
+PROTECTED_CALLBACKS_ATTR = "_dash_auth_plus_protected_callbacks"
+
+
+def get_protected_callbacks(app: dash.Dash) -> list:
+    """Retrieve callback ids registered through protected_callback."""
+    return getattr(app, PROTECTED_CALLBACKS_ATTR, [])
+
 OutputVal = Union[Callable[..., Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
 
@@ -577,6 +584,14 @@ def protected_callback(
                     if callback_id not in existing
                 ]
                 setattr(app, PUBLIC_CALLBACKS_ATTR, merged)
+
+                protected_existing = get_protected_callbacks(app)
+                protected_merged = protected_existing + [
+                    callback_id
+                    for callback_id in new_callback_ids
+                    if callback_id not in protected_existing
+                ]
+                setattr(app, PROTECTED_CALLBACKS_ATTR, protected_merged)
         except Exception:
             logging.debug(
                 "Could not auto-register protected callback id for middleware bypass."

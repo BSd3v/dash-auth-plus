@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 import inspect
 import logging
 import os
+import time
 from typing import Any, Optional, Union
 
 from dash import Dash
@@ -13,7 +14,7 @@ from .public_routes import (
     get_public_callbacks,
     get_public_routes,
 )
-from .group_protection import protect_layouts
+from .group_protection import get_protected_callbacks, protect_layouts
 from werkzeug.routing import Map, Rule
 
 _cached_page_registry_data = (
@@ -158,6 +159,65 @@ class Auth(ABC):
         if not isinstance(body, dict):
             return False
         return "streamDownlink" in body or "streamCancel" in body
+
+    @staticmethod
+    def _get_stream_request_id(body):
+        """Extract stream request id from Dash stream transport payloads."""
+        if not isinstance(body, dict):
+            return None
+
+        for key in ("streamConnection", "streamDownlink", "streamCancel"):
+            payload = body.get(key)
+            if isinstance(payload, dict):
+                request_id = payload.get("requestId")
+                if isinstance(request_id, str) and request_id:
+                    return request_id
+        return None
+
+    def _get_stream_authz_registry(self):
+        """Return per-app registry of authorized stream request ids."""
+        registry = getattr(self.app, "_dash_auth_plus_stream_authz", None)
+        if registry is None:
+            registry = {}
+            setattr(self.app, "_dash_auth_plus_stream_authz", registry)
+        return registry
+
+    def _register_stream_request(self, request_id):
+        if not request_id:
+            return
+
+        registry = self._get_stream_authz_registry()
+        now = time.monotonic()
+        ttl_seconds = 300
+        max_entries = 2048
+
+        # Opportunistic cleanup to keep memory bounded.
+        expired = [
+            req_id
+            for req_id, expiry in registry.items()
+            if not isinstance(expiry, (int, float)) or expiry <= now
+        ]
+        for req_id in expired:
+            registry.pop(req_id, None)
+
+        if len(registry) >= max_entries:
+            oldest = min(registry.items(), key=lambda item: item[1])[0]
+            registry.pop(oldest, None)
+
+        registry[request_id] = now + ttl_seconds
+
+    def _is_stream_request_authorized(self, request_id):
+        if not request_id:
+            return False
+
+        registry = self._get_stream_authz_registry()
+        expiry = registry.get(request_id)
+        now = time.monotonic()
+        if isinstance(expiry, (int, float)) and expiry > now:
+            return True
+
+        registry.pop(request_id, None)
+        return False
 
     async def _get_callback_body_async(self, req):
         """Read callback request JSON for async-capable backends."""
@@ -380,6 +440,7 @@ class Auth(ABC):
             req_path = self._normalized_request_path(getattr(req, "path", None))
             public_routes = get_public_routes(self.app)
             public_callbacks = get_public_callbacks(self.app)
+            protected_callbacks = get_protected_callbacks(self.app)
 
             # Handle Dash's callback route:
             # * Check whether the callback is marked as public
@@ -387,16 +448,25 @@ class Auth(ABC):
             #   which case the path should be checked against the public routes
             if req_path == "/_dash-update-component":
                 body = self._get_callback_body_sync(req)
+                stream_request_id = self._get_stream_request_id(body)
 
-                # Dash streaming transport messages do not include callback ids,
-                # so require auth without trusted public-stream metadata.
+                output_id = body.get("output") if isinstance(body, dict) else None
+
+                # Let callback-level protection run whenever this request maps
+                # to an explicitly registered callback id.
+                if output_id in public_callbacks:
+                    self._register_stream_request(stream_request_id)
+                    return None
+
+                if output_id in protected_callbacks:
+                    self._register_stream_request(stream_request_id)
+                    return None
+
+                # Dash streaming transport messages do not include callback ids.
+                # Let Dash backend validate stream tokens/connection ownership.
+                # streamDownlink payloads use cursor fields (e.g. "from") and
+                # do not consistently carry callback request ids.
                 if self._is_stream_transport_request(body):
-                    if self.is_authorized():
-                        return None
-                    return self.login_request()
-
-                # Check whether the callback is marked as public
-                if body.get("output") in public_callbacks:
                     return None
 
                 pathname = next(
@@ -428,6 +498,7 @@ class Auth(ABC):
                     if self.auth_protect_layouts or self._path_matches_map(
                         public_routes, pathname
                     ):
+                        self._register_stream_request(stream_request_id)
                         return None
 
             # If the route is not a callback route, check whether the path
@@ -468,6 +539,7 @@ class Auth(ABC):
             req_path = self._normalized_request_path(getattr(req, "path", None))
             public_routes = get_public_routes(self.app)
             public_callbacks = get_public_callbacks(self.app)
+            protected_callbacks = get_protected_callbacks(self.app)
 
             # Handle Dash's callback route:
             # * Check whether the callback is marked as public
@@ -475,16 +547,25 @@ class Auth(ABC):
             #   which case the path should be checked against the public routes
             if req_path == "/_dash-update-component":
                 body = await self._get_callback_body_async(req)
+                stream_request_id = self._get_stream_request_id(body)
 
-                # Dash streaming transport messages do not include callback ids,
-                # so require auth without trusted public-stream metadata.
+                output_id = body.get("output") if isinstance(body, dict) else None
+
+                # Let callback-level protection run whenever this request maps
+                # to an explicitly registered callback id.
+                if output_id in public_callbacks:
+                    self._register_stream_request(stream_request_id)
+                    return None
+
+                if output_id in protected_callbacks:
+                    self._register_stream_request(stream_request_id)
+                    return None
+
+                # Dash streaming transport messages do not include callback ids.
+                # Let Dash backend validate stream tokens/connection ownership.
+                # streamDownlink payloads use cursor fields (e.g. "from") and
+                # do not consistently carry callback request ids.
                 if self._is_stream_transport_request(body):
-                    if self.is_authorized():
-                        return None
-                    return self.login_request()
-
-                # Check whether the callback is marked as public
-                if body.get("output") in public_callbacks:
                     return None
 
                 pathname = next(
@@ -516,6 +597,7 @@ class Auth(ABC):
                     if self.auth_protect_layouts or self._path_matches_map(
                         public_routes, pathname
                     ):
+                        self._register_stream_request(stream_request_id)
                         return None
 
             # If the route is not a callback route, check whether the path

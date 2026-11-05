@@ -581,3 +581,4 @@ def test_gp022_protected_callback_registers_callback_id_for_middleware_allowlist
                         yield "x"
 
                     assert "callback-id-1" in fake_dash_app._dash_auth_plus_public_callbacks
+                    assert "callback-id-1" in fake_dash_app._dash_auth_plus_protected_callbacks

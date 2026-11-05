@@ -246,7 +246,9 @@ def test_stream_transport_requires_auth_on_protected_endpoint():
 
 @pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
 @pytest.mark.parametrize("transport", ["streamDownlink", "streamCancel"])
-def test_stream_transport_rejects_public_referer_without_auth(server_type, transport):
+def test_stream_transport_allows_backend_verified_transport_without_auth(
+    server_type, transport
+):
     captured = {}
 
     async def get_json():
@@ -273,7 +275,59 @@ def test_stream_transport_rejects_public_referer_without_auth(server_type, trans
     result = captured["hook"]()
     if server_type != "flask":
         result = asyncio.run(result)
-    assert result == "login"
+    assert result is None
+
+
+@pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
+@pytest.mark.parametrize("transport", ["streamDownlink", "streamCancel"])
+def test_stream_transport_allows_seeded_request_id_for_protected_callback(
+    server_type, transport
+):
+    captured = {}
+    request_state = {"mode": "seed"}
+
+    def _body_for_mode():
+        if request_state["mode"] == "seed":
+            return {
+                "output": "protected-stream-status.children",
+                "streamConnection": {"requestId": "r1"},
+            }
+        return {transport: {"requestId": "r1"}}
+
+    async def get_json():
+        return _body_for_mode()
+
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=(
+            (lambda: _body_for_mode())
+            if server_type == "flask"
+            else get_json
+        ),
+        headers={"referer": "http://localhost/public"},
+    )
+    backend = SimpleNamespace(
+        server_type=server_type,
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+    app._dash_auth_plus_protected_callbacks = ["protected-stream-status.children"]
+
+    DenyAuth(app, public_routes=["/public"])
+
+    # Seed request id from an allowed protected callback invocation.
+    seed_result = captured["hook"]()
+    if server_type != "flask":
+        seed_result = asyncio.run(seed_result)
+    assert seed_result is None
+
+    # Follow-up transport request should be accepted for the seeded request id.
+    request_state["mode"] = "transport"
+    transport_result = captured["hook"]()
+    if server_type != "flask":
+        transport_result = asyncio.run(transport_result)
+    assert transport_result is None
 
 
 @pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
@@ -323,3 +377,36 @@ def test_clerk_auth_uses_base_session_loader_with_custom_serializer():
     )
 
     assert auth._get_session(request) == payload
+
+
+@pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
+def test_protected_callback_output_precedes_stream_transport_gate(server_type):
+    captured = {}
+
+    body = {
+        "output": "protected-stream-status.children",
+        "streamDownlink": {"requestId": "r1"},
+    }
+
+    async def get_json():
+        return body
+
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=((lambda: body) if server_type == "flask" else get_json),
+        headers={"referer": "http://localhost/public"},
+    )
+    backend = SimpleNamespace(
+        server_type=server_type,
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+    app._dash_auth_plus_protected_callbacks = ["protected-stream-status.children"]
+
+    DenyAuth(app)
+
+    result = captured["hook"]()
+    if server_type != "flask":
+        result = asyncio.run(result)
+    assert result is None
