@@ -349,9 +349,18 @@ def protected(
                 )
 
                 if authorized:
-                    async for item in output(*args, **kwargs):
-                        yield item
-                    return
+                    stream_auth_check = _kwargs.get("_stream_auth_check")
+                    stream = output(*args, **kwargs)
+                    try:
+                        async for item in stream:
+                            if stream_auth_check is not None and not stream_auth_check():
+                                authorized = None
+                                break
+                            yield item
+                        else:
+                            return
+                    finally:
+                        await stream.aclose()
 
                 fallback = (
                     _process_output(unauthenticated_output, path=path)
@@ -461,6 +470,10 @@ def protected_callback(
 ) -> Callable:
     """Protected Dash callback.
 
+    Streaming callbacks that pass the initial permission check recheck
+    authentication before each yield and stop with the unauthenticated output
+    if authentication is lost.
+
     :param **: all args and kwargs passed to a Dash callback
     :param unauthenticated_output: Output when the user is not authenticated.
         **Note**: Needs to be a function with no argument or static outputs.
@@ -545,6 +558,16 @@ def protected_callback(
             else prevent_unauthorised
         )
 
+        def stream_auth_check():
+            try:
+                app = get_app()
+            except Exception:
+                return _get_session_user() is not None
+            auth = getattr(app, "_dash_auth_plus_auth", None)
+            if auth is None:
+                return _get_session_user() is not None
+            return auth.is_authorized()
+
         before_callback_ids = set(GLOBAL_CALLBACK_MAP.keys())
 
         wrapped_func = dash.callback(*callback_args, **callback_kwargs)(
@@ -567,6 +590,7 @@ def protected_callback(
                 restricted_users=restricted_users,
                 restricted_users_lookup=restricted_users_lookup,
                 user_session_key=user_session_key,
+                _stream_auth_check=stream_auth_check,
             )(func)
         )
 
