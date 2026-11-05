@@ -18,7 +18,7 @@ from dash_auth_plus.public_routes import add_public_routes, get_public_routes
 
 class DummyAuth(Auth):
     def is_authorized(self):
-        return None
+        return True
 
     def login_request(self):
         return None
@@ -27,6 +27,14 @@ class DummyAuth(Auth):
 class DenyAuth(Auth):
     def is_authorized(self):
         return False
+
+    def login_request(self):
+        return "login"
+
+
+class AllowAuth(Auth):
+    def is_authorized(self):
+        return True
 
     def login_request(self):
         return "login"
@@ -147,7 +155,7 @@ def test_auth_protect_layouts_allows_page_container_routing_callbacks():
         request_adapter=lambda: request,
         before_request=lambda func: captured.setdefault("hook", func),
     )
-    app = SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend)
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
 
     with patch("dash_auth_plus.auth.protect_layouts"):
         auth = DenyAuth(
@@ -167,7 +175,7 @@ def test_oidc_auth_accepts_fastapi_backend():
         before_request=lambda func: None,
         add_url_rule=lambda *args, **kwargs: added_routes.append((args, kwargs)),
     )
-    app = SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend)
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
     fake_oauth = SimpleNamespace(_registry={}, _clients={})
     fake_fastapi = types.SimpleNamespace(Request=object)
     fake_dash_fastapi = types.SimpleNamespace(
@@ -207,7 +215,7 @@ def test_fastapi_backend_uses_async_callback_hook():
         request_adapter=lambda: request,
         before_request=lambda func: captured.setdefault("hook", func),
     )
-    app = SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend)
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
     add_public_routes(app, ["/public"])
 
     auth = DenyAuth(app, page_container="_pages_content")
@@ -216,8 +224,65 @@ def test_fastapi_backend_uses_async_callback_hook():
     assert asyncio.run(captured["hook"]()) is None
 
 
+def test_stream_transport_requires_auth_on_protected_endpoint():
+    captured = {}
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=lambda: {"streamDownlink": {"requestId": "r1"}},
+        headers={"referer": "http://localhost/private"},
+    )
+    backend = SimpleNamespace(
+        server_type="flask",
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+
+    DenyAuth(app)
+
+    assert captured["hook"]() == "login"
+
+
+def test_stream_transport_allows_public_referer_without_auth():
+    captured = {}
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=lambda: {"streamCancel": {"requestId": "r1"}},
+        headers={"referer": "http://localhost/public"},
+    )
+    backend = SimpleNamespace(
+        server_type="flask",
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+
+    DenyAuth(app, public_routes=["/public"])
+
+    assert captured["hook"]() is None
+
+
+def test_stream_transport_allows_authorized_user_on_protected_endpoint():
+    captured = {}
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=lambda: {"streamDownlink": {"requestId": "r1"}},
+        headers={"referer": "http://localhost/private"},
+    )
+    backend = SimpleNamespace(
+        server_type="flask",
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+
+    AllowAuth(app)
+
+    assert captured["hook"]() is None
+
+
 def test_clerk_auth_uses_base_session_loader_with_custom_serializer():
-    auth = object.__new__(ClerkAuth)
+    auth = cast(Any, object.__new__(ClerkAuth))
     auth.app = SimpleNamespace(config={}, server=SimpleNamespace())
     auth._clerk_session_serializer = URLSafeSerializer(
         "test-secret",

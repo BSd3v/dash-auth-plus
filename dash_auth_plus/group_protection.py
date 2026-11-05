@@ -4,11 +4,22 @@ from typing import Any, Callable, List, Literal, Optional, Union
 from werkzeug.routing import MapAdapter
 
 import dash
+from dash import get_app
+from dash._callback import GLOBAL_CALLBACK_MAP
 from dash.exceptions import PreventUpdate
 from flask import session, has_request_context
 from dash import html
-from inspect import Parameter, iscoroutinefunction, isawaitable, signature
+from inspect import (
+    Parameter,
+    isasyncgen,
+    isasyncgenfunction,
+    iscoroutinefunction,
+    isawaitable,
+    signature,
+)
 from functools import lru_cache
+
+from .public_routes import PUBLIC_CALLBACKS_ATTR, get_public_callbacks
 
 OutputVal = Union[Callable[..., Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
@@ -312,6 +323,46 @@ def protected(
         missing_permissions_output = unauthenticated_output
 
     def decorator(output: OutputVal):
+        if isasyncgenfunction(output):
+
+            async def async_gen_wrap(*args, **kwargs):
+                path = _kwargs.get("path_template") or _kwargs.get("path")
+                authorized = check_groups(
+                    groups=groups,
+                    groups_key=groups_key,
+                    groups_str_split=groups_str_split,
+                    check_type=check_type,
+                    group_lookup=group_lookup,
+                    runtime_lookup=kwargs,
+                    restricted_users=restricted_users,
+                    restricted_users_lookup=restricted_users_lookup,
+                    user_session_key=user_session_key,
+                    path=path,
+                )
+
+                if authorized:
+                    async for item in output(*args, **kwargs):
+                        yield item
+                    return
+
+                fallback = (
+                    _process_output(unauthenticated_output, path=path)
+                    if authorized is None
+                    else _process_output(missing_permissions_output, path=path)
+                )
+
+                if isasyncgen(fallback):
+                    async for item in fallback:
+                        yield item
+                    return
+
+                if isawaitable(fallback):
+                    fallback = await fallback
+
+                yield fallback
+
+            return async_gen_wrap
+
         if iscoroutinefunction(output):
 
             async def async_wrap(*args, **kwargs):
@@ -443,12 +494,21 @@ def protected_callback(
     """
 
     def decorator(func):
+        is_streaming_callback = isasyncgenfunction(func)
+
         def prevent_unauthenticated():
             logging.info(
                 "A user tried to run %s without being authenticated.",
                 func.__name__,
             )
             raise PreventUpdate
+
+        def stream_prevent_unauthenticated():
+            logging.info(
+                "A user tried to run %s without being authenticated.",
+                func.__name__,
+            )
+            return dash.no_update
 
         def prevent_unauthorised():
             logging.info(
@@ -458,17 +518,38 @@ def protected_callback(
             )
             raise PreventUpdate
 
+        def stream_prevent_unauthorised():
+            logging.info(
+                "%s tried to run %s but did not have the right permissions.",
+                session["user"]["email"],
+                func.__name__,
+            )
+            return dash.no_update
+
+        default_unauthenticated_output = (
+            stream_prevent_unauthenticated
+            if is_streaming_callback
+            else prevent_unauthenticated
+        )
+        default_missing_permissions_output = (
+            stream_prevent_unauthorised
+            if is_streaming_callback
+            else prevent_unauthorised
+        )
+
+        before_callback_ids = set(GLOBAL_CALLBACK_MAP.keys())
+
         wrapped_func = dash.callback(*callback_args, **callback_kwargs)(
             protected(
                 unauthenticated_output=(
                     unauthenticated_output
                     if unauthenticated_output is not None
-                    else prevent_unauthenticated
+                    else default_unauthenticated_output
                 ),
                 missing_permissions_output=(
                     missing_permissions_output
                     if missing_permissions_output is not None
-                    else prevent_unauthorised
+                    else default_missing_permissions_output
                 ),
                 groups=groups,
                 groups_key=groups_key,
@@ -480,6 +561,26 @@ def protected_callback(
                 user_session_key=user_session_key,
             )(func)
         )
+
+        try:
+            new_callback_ids = [
+                callback_id
+                for callback_id in GLOBAL_CALLBACK_MAP.keys()
+                if callback_id not in before_callback_ids
+            ]
+            if new_callback_ids:
+                app = get_app()
+                existing = get_public_callbacks(app)
+                merged = existing + [
+                    callback_id
+                    for callback_id in new_callback_ids
+                    if callback_id not in existing
+                ]
+                setattr(app, PUBLIC_CALLBACKS_ATTR, merged)
+        except Exception:
+            logging.debug(
+                "Could not auto-register protected callback id for middleware bypass."
+            )
 
         def wrap(*args, **kwargs):
             return wrapped_func(*args, **kwargs)

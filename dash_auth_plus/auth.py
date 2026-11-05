@@ -3,7 +3,8 @@ from abc import ABC, abstractmethod
 import inspect
 import logging
 import os
-from typing import Optional, Union
+from urllib.parse import urlparse
+from typing import Any, Optional, Union
 
 from dash import Dash
 from itsdangerous import BadSignature, URLSafeSerializer
@@ -158,6 +159,26 @@ class Auth(ABC):
         if not isinstance(body, dict):
             return False
         return "streamDownlink" in body or "streamCancel" in body
+
+    def _is_public_referer_request(self, req, public_routes):
+        """Return True when request Referer path matches a public route."""
+        headers = getattr(req, "headers", {}) or {}
+        referer = headers.get("Referer") or headers.get("referer")
+        if not referer:
+            return False
+
+        try:
+            referer_path = urlparse(referer).path or "/"
+        except Exception:
+            return False
+
+        return self._path_matches_map(public_routes, referer_path)
+
+    def _allow_stream_transport(self, req, public_routes):
+        """Allow Dash stream downlink/cancel only for authorized or public requests."""
+        if self.is_authorized():
+            return True
+        return self._is_public_referer_request(req, public_routes)
 
     async def _get_callback_body_async(self, req):
         """Read callback request JSON for async-capable backends."""
@@ -388,9 +409,12 @@ class Auth(ABC):
             if req_path == "/_dash-update-component":
                 body = self._get_callback_body_sync(req)
 
-                # Dash streaming transport messages do not include callback ids.
+                # Dash streaming transport messages do not include callback ids,
+                # so authorize them using user auth and referer public-route checks.
                 if self._is_stream_transport_request(body):
-                    return None
+                    if self._allow_stream_transport(req, public_routes):
+                        return None
+                    return self.login_request()
 
                 # Check whether the callback is marked as public
                 if body.get("output") in public_callbacks:
@@ -473,9 +497,12 @@ class Auth(ABC):
             if req_path == "/_dash-update-component":
                 body = await self._get_callback_body_async(req)
 
-                # Dash streaming transport messages do not include callback ids.
+                # Dash streaming transport messages do not include callback ids,
+                # so authorize them using user auth and referer public-route checks.
                 if self._is_stream_transport_request(body):
-                    return None
+                    if self._allow_stream_transport(req, public_routes):
+                        return None
+                    return self.login_request()
 
                 # Check whether the callback is marked as public
                 if body.get("output") in public_callbacks:
@@ -551,9 +578,9 @@ class Auth(ABC):
             register_hook(before_request_auth)
 
     @abstractmethod
-    def is_authorized(self):
+    def is_authorized(self) -> bool:
         pass
 
     @abstractmethod
-    def login_request(self):
+    def login_request(self) -> Any:
         pass
