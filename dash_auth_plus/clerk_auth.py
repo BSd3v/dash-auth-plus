@@ -710,16 +710,7 @@ class ClerkAuth(Auth):
                     ),
                 )
                 if request_state.is_signed_in:
-                    try:
-                        self.clerk_client.sessions.revoke(
-                            session_id=request_state.payload.get("sid")
-                        )
-                    except Exception as e:
-                        logging.error(
-                            "Error revoking Clerk session during logout: %s\n%s",
-                            e,
-                            traceback.format_exc(),
-                        )
+                    session_sid = session_sid or request_state.payload.get("sid")
             except Exception as e:
                 logging.error(
                     "Error authenticating Clerk request during logout: %s\n%s",
