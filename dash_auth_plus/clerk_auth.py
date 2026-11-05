@@ -727,6 +727,8 @@ class ClerkAuth(Auth):
                         traceback.format_exc(),
                     )
         session_data.clear()
+        self._clear_request_session(req)
+        self._clear_flask_session()
         response = self.app.backend.make_response(
             self.logout_page or f"""
         <div style="display: flex; flex-direction: column;
