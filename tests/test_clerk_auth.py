@@ -4,6 +4,8 @@ from dash_auth_plus import ClerkAuth
 import os
 import pytest
 import flask
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 
 def spinup_app():
@@ -279,3 +281,45 @@ class TestGetSafeRedirectUrl:
     def test_different_port_rejected(self, safe_redirect, http_request_ctx):
         """Same host but different port is a different origin and must be rejected."""
         assert safe_redirect("http://example.com:9000/path") is None
+
+
+@pytest.mark.parametrize(
+    ("session_sid", "request_sid", "expected_sid"),
+    [
+        ("session-sid", "request-sid", "session-sid"),
+        (None, "request-sid", "request-sid"),
+    ],
+)
+def test_logout_revokes_clerk_session_once(session_sid, request_sid, expected_sid):
+    auth = object.__new__(ClerkAuth)
+    session_data = {"user": {}}
+    if session_sid:
+        session_data["sid"] = session_sid
+    response = object()
+    request_state = SimpleNamespace(
+        is_signed_in=True,
+        payload={"sid": request_sid},
+    )
+    revoke = Mock()
+    auth._get_request = Mock(return_value=object())
+    auth._get_session = Mock(return_value=session_data)
+    auth.before_logout = Mock()
+    auth._build_clerk_request = Mock(return_value={})
+    auth.authenticate_request_options = Mock(return_value={})
+    auth.allowed_parties = []
+    auth.clerk_client = SimpleNamespace(
+        authenticate_request=Mock(return_value=request_state),
+        sessions=SimpleNamespace(revoke=revoke),
+    )
+    auth.app = SimpleNamespace(
+        backend=SimpleNamespace(make_response=Mock(return_value=response)),
+        config={},
+    )
+    auth.logout_page = "Logged out"
+    auth.clerk_script = ""
+    auth._clear_clerk_cookies = Mock()
+    auth._clear_session_cookie = Mock(return_value=response)
+
+    auth.logout()
+
+    revoke.assert_called_once_with(session_id=expected_sid)
