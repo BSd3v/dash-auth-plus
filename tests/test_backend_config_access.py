@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
+import pytest
 from dash import Dash
 from flask import Flask, session
 from itsdangerous import URLSafeSerializer
@@ -243,15 +244,25 @@ def test_stream_transport_requires_auth_on_protected_endpoint():
     assert captured["hook"]() == "login"
 
 
-def test_stream_transport_allows_public_referer_without_auth():
+@pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
+@pytest.mark.parametrize("transport", ["streamDownlink", "streamCancel"])
+def test_stream_transport_rejects_public_referer_without_auth(server_type, transport):
     captured = {}
+
+    async def get_json():
+        return {transport: {"requestId": "r1"}}
+
     request = SimpleNamespace(
         path="/_dash-update-component",
-        get_json=lambda: {"streamCancel": {"requestId": "r1"}},
+        get_json=(
+            (lambda: {transport: {"requestId": "r1"}})
+            if server_type == "flask"
+            else get_json
+        ),
         headers={"referer": "http://localhost/public"},
     )
     backend = SimpleNamespace(
-        server_type="flask",
+        server_type=server_type,
         request_adapter=lambda: request,
         before_request=lambda func: captured.setdefault("hook", func),
     )
@@ -259,18 +270,33 @@ def test_stream_transport_allows_public_referer_without_auth():
 
     DenyAuth(app, public_routes=["/public"])
 
-    assert captured["hook"]() is None
+    result = captured["hook"]()
+    if server_type != "flask":
+        result = asyncio.run(result)
+    assert result == "login"
 
 
-def test_stream_transport_allows_authorized_user_on_protected_endpoint():
+@pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
+@pytest.mark.parametrize("transport", ["streamDownlink", "streamCancel"])
+def test_stream_transport_allows_authorized_user_on_protected_endpoint(
+    server_type, transport
+):
     captured = {}
+
+    async def get_json():
+        return {transport: {"requestId": "r1"}}
+
     request = SimpleNamespace(
         path="/_dash-update-component",
-        get_json=lambda: {"streamDownlink": {"requestId": "r1"}},
+        get_json=(
+            (lambda: {transport: {"requestId": "r1"}})
+            if server_type == "flask"
+            else get_json
+        ),
         headers={"referer": "http://localhost/private"},
     )
     backend = SimpleNamespace(
-        server_type="flask",
+        server_type=server_type,
         request_adapter=lambda: request,
         before_request=lambda func: captured.setdefault("hook", func),
     )
@@ -278,7 +304,10 @@ def test_stream_transport_allows_authorized_user_on_protected_endpoint():
 
     AllowAuth(app)
 
-    assert captured["hook"]() is None
+    result = captured["hook"]()
+    if server_type != "flask":
+        result = asyncio.run(result)
+    assert result is None
 
 
 def test_clerk_auth_uses_base_session_loader_with_custom_serializer():
