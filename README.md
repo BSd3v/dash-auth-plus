@@ -14,7 +14,7 @@ pip install -r dev-requirements.txt
 python -k ba001
 ```
 
-Note that Python 3.8 or greater is required.
+Note that Python 3.9 or greater is required.
 
 > As Plotly will not add new features to the `dash-auth` library, this was created to allow for new features to be added.
 > However, please note that you are entirely responsible maintaining the security with using this open source package.

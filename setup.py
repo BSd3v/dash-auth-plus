@@ -17,13 +17,13 @@ setup(
     description="Dash Authorization Package.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    install_requires=["dash>=4.1.0rc0", "flask", "werkzeug", "python-dotenv"],
+    install_requires=["dash>=4.5.0", "flask", "werkzeug", "python-dotenv"],
     extras_require={
         "oidc": ["authlib"],
         "clerk": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"],
         "all": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"],
     },
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     include_package_data=True,
     url="https://github.com/BSd3v",
     classifiers=[
@@ -39,7 +39,6 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",

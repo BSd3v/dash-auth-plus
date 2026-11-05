@@ -146,6 +146,18 @@ class Auth(ABC):
 
         return body if isinstance(body, dict) else {}
 
+    @staticmethod
+    def _is_stream_transport_request(body):
+        """Return True for Dash streaming transport-only callback payloads.
+
+        Dash 4.5 uses special callback payloads for stream downlink/cancel that
+        do not carry a callback output id, so they bypass normal public-callback
+        matching logic.
+        """
+        if not isinstance(body, dict):
+            return False
+        return "streamDownlink" in body or "streamCancel" in body
+
     async def _get_callback_body_async(self, req):
         """Read callback request JSON for async-capable backends."""
         get_json = getattr(req, "get_json", None)
@@ -347,6 +359,10 @@ class Auth(ABC):
             if req_path == "/_dash-update-component":
                 body = self._get_callback_body_sync(req)
 
+                # Dash streaming transport messages do not include callback ids.
+                if self._is_stream_transport_request(body):
+                    return None
+
                 # Check whether the callback is marked as public
                 if body.get("output") in public_callbacks:
                     return None
@@ -428,6 +444,10 @@ class Auth(ABC):
             #   which case the path should be checked against the public routes
             if req_path == "/_dash-update-component":
                 body = await self._get_callback_body_async(req)
+
+                # Dash streaming transport messages do not include callback ids.
+                if self._is_stream_transport_request(body):
+                    return None
 
                 # Check whether the callback is marked as public
                 if body.get("output") in public_callbacks:

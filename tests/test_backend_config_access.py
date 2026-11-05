@@ -11,14 +11,14 @@ from dash_auth_plus.public_routes import add_public_routes, get_public_routes
 
 class DummyAuth(Auth):
     def is_authorized(self):
-        return True
+        return None
 
     def login_request(self):
         return None
 
 
 def test_auth_config_helpers_support_non_flask_server_config():
-    auth = object.__new__(DummyAuth)
+    auth = cast(Any, object.__new__(DummyAuth))
     auth.app = SimpleNamespace(
         config={"SESSION_COOKIE_SECURE": True},
         server=SimpleNamespace(),
@@ -70,3 +70,9 @@ def test_get_callback_body_async_awaits_quart_style_get_json():
 
     body = asyncio.run(auth._get_callback_body_async(AsyncReq()))
     assert body == {"output": "x", "inputs": []}
+
+
+def test_is_stream_transport_request_detects_dash_stream_payloads():
+    assert Auth._is_stream_transport_request({"streamDownlink": {"requestId": "1"}})
+    assert Auth._is_stream_transport_request({"streamCancel": {"requestId": "1"}})
+    assert not Auth._is_stream_transport_request({"output": "component.children"})
