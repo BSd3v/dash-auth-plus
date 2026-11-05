@@ -225,7 +225,7 @@ def test_fastapi_backend_uses_async_callback_hook():
     assert asyncio.run(captured["hook"]()) is None
 
 
-def test_stream_transport_requires_auth_on_protected_endpoint():
+def test_stream_transport_defers_to_backend_verification_on_protected_endpoint():
     captured = {}
     request = SimpleNamespace(
         path="/_dash-update-component",
@@ -241,7 +241,7 @@ def test_stream_transport_requires_auth_on_protected_endpoint():
 
     DenyAuth(app)
 
-    assert captured["hook"]() == "login"
+    assert captured["hook"]() is None
 
 
 @pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
