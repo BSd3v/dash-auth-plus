@@ -851,6 +851,9 @@ class ClerkAuth(Auth):
                     "User %s is logging in.", session_data["user"].get("email")
                 )
 
+        if user:
+            self._sync_flask_session(session_data)
+
         if callback_response is not None:
             response = callback_response
             if not hasattr(response, "set_cookie"):
