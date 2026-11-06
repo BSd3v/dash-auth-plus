@@ -317,6 +317,10 @@ class OIDCAuth(Auth):
                     400,
                 )
 
+        if self._is_fastapi:
+            login_url = self.login_route.replace("<idp>", idp)
+            return self._redirect_response(login_url)
+
         redirect_uri = self._create_redirect_uri(idp)
         oauth_client = self.get_oauth_client(idp)
         oauth_kwargs = self.get_oauth_kwargs(idp)

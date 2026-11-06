@@ -205,6 +205,52 @@ def test_oidc_auth_accepts_fastapi_backend():
     assert get_oauth(app) is fake_oauth
 
 
+def test_fastapi_oidc_automatic_login_redirects_to_async_login_route():
+    Response = pytest.importorskip("starlette.responses").Response
+    captured = {}
+    request = SimpleNamespace(
+        path="/private",
+        root="https://example.test/",
+        headers={},
+        cookies={},
+        scope={"method": "GET"},
+        state=SimpleNamespace(),
+    )
+    fake_oauth = SimpleNamespace(
+        _registry={"idp": (None, {})},
+        _clients={"idp": object()},
+    )
+    backend = SimpleNamespace(
+        server_type="fastapi",
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+        add_url_rule=lambda *args, **kwargs: None,
+        make_response=lambda body="", status=200, **_kwargs: Response(
+            content=body, status_code=status
+        ),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+    fake_fastapi = types.SimpleNamespace(Request=object)
+    fake_dash_fastapi = types.SimpleNamespace(
+        set_current_request=lambda _request: None,
+        reset_current_request=lambda _token: None,
+    )
+
+    with patch("authlib.integrations.starlette_client.OAuth", return_value=fake_oauth):
+        with patch.dict(
+            sys.modules,
+            {
+                "fastapi": fake_fastapi,
+                "dash.backends._fastapi": fake_dash_fastapi,
+            },
+        ):
+            OIDCAuth(app, secret_key="test-secret")
+            response = asyncio.run(captured["hook"]())
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/oidc/idp/login"
+
+
 def test_fastapi_oidc_login_and_callback_use_signed_session_cookie():
     starlette_responses = pytest.importorskip("starlette.responses")
     RedirectResponse = starlette_responses.RedirectResponse
