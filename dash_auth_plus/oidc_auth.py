@@ -2,7 +2,7 @@ import logging
 import os
 import re
 from urllib.parse import urlparse, urlunparse
-from typing import Dict, List, Optional, Union, Callable, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Union, Callable, TYPE_CHECKING
 
 import dash
 from authlib.integrations.base_client import OAuthError
@@ -163,7 +163,14 @@ class OIDCAuth(Auth):
             self._set_config_value("SESSION_COOKIE_SECURE", True)
             self._set_config_value("SESSION_COOKIE_HTTPONLY", True)
 
-        self.oauth = OAuth(app.server)
+        self._is_fastapi = getattr(app.backend, "server_type", None) == "fastapi"
+        if self._is_fastapi:
+            from authlib.integrations.starlette_client import OAuth as StarletteOAuth
+
+            self.oauth = StarletteOAuth()
+        else:
+            self.oauth = OAuth(app.server)
+        setattr(self.app, "_dash_auth_plus_oidc_oauth", self.oauth)
 
         # Check that the login and callback rules have an <idp> placeholder
         if not re.findall(r"/<idp>(?=/|$)", login_route):
@@ -171,17 +178,17 @@ class OIDCAuth(Auth):
         if not re.findall(r"/<idp>(?=/|$)", callback_route):
             raise Exception("The callback route must contain a <idp> placeholder.")
 
-        if getattr(app.backend, "server_type", None) == "fastapi":
+        if self._is_fastapi:
             from fastapi import Request as FastAPIRequest
             from dash.backends._fastapi import (
                 set_current_request,
                 reset_current_request,
             )
 
-            def login_view(idp: str, request: FastAPIRequest):
+            async def login_view(idp: str, request: FastAPIRequest):
                 token = set_current_request(request)
                 try:
-                    return self.login_request(idp)
+                    return await self.login_request_async(idp, request)
                 finally:
                     reset_current_request(token)
 
@@ -192,10 +199,10 @@ class OIDCAuth(Auth):
                 finally:
                     reset_current_request(token)
 
-            def callback_view(idp: str, request: FastAPIRequest):
+            async def callback_view(idp: str, request: FastAPIRequest):
                 token = set_current_request(request)
                 try:
-                    return self.callback(idp)
+                    return await self.callback_async(idp, request)
                 finally:
                     reset_current_request(token)
 
@@ -318,6 +325,32 @@ class OIDCAuth(Auth):
             **oauth_kwargs.get("authorize_redirect_kwargs", {}),
         )
 
+    async def login_request_async(self, idp: str, request):
+        """Start the login process using Authlib's ASGI client."""
+        session_data = self._get_session(request)
+        request.scope["session"] = session_data
+
+        if idp not in self.oauth._registry:
+            if self.idp_selection_route:
+                return self._redirect_response(self.idp_selection_route)
+            if len(self.oauth._registry) == 1:
+                idp = next(iter(self.oauth._clients))
+            else:
+                return self.app.backend.make_response(
+                    "Several OAuth providers are registered. Please choose one.",
+                    status=400,
+                )
+
+        redirect_uri = self._create_redirect_uri(idp)
+        oauth_client = self.get_oauth_client(idp)
+        oauth_kwargs = self.get_oauth_kwargs(idp)
+        response = await oauth_client.authorize_redirect(
+            request,
+            redirect_uri,
+            **oauth_kwargs.get("authorize_redirect_kwargs", {}),
+        )
+        return self._save_session(response, session_data)
+
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
         base_url = self.app.config.get("url_base_pathname") or "/"
@@ -354,6 +387,30 @@ class OIDCAuth(Auth):
 
         user = token.get("userinfo")
         return self.after_logged_in(user, idp, token)
+
+    async def callback_async(self, idp: str, request):
+        """Handle the OIDC dance using Authlib's ASGI client."""
+        if idp not in self.oauth._registry:
+            return self.app.backend.make_response(
+                f"'{idp}' is not a valid registered idp", status=400
+            )
+
+        session_data = self._get_session(request)
+        request.scope["session"] = session_data
+        oauth_client = self.get_oauth_client(idp)
+        oauth_kwargs = self.get_oauth_kwargs(idp)
+        try:
+            token = await oauth_client.authorize_access_token(
+                request,
+                **oauth_kwargs.get("authorize_token_kwargs", {}),
+            )
+        except OAuthError as err:
+            return self.app.backend.make_response(str(err), status=401)
+
+        if self.login_user_callback:
+            response = self.after_logged_in(token.get("userinfo"), idp, token)
+            return self._save_session(response, session_data)
+        return self.after_logged_in(token.get("userinfo"), idp, token)
 
     def after_logged_in(self, user: Optional[dict], idp: str, token: dict):
         """
@@ -416,7 +473,7 @@ class OIDCAuth(Auth):
         return map_adapter.test(req.path) or "user" in session_data
 
 
-def get_oauth(app: dash.Dash = None) -> OAuth:
+def get_oauth(app: dash.Dash = None) -> Any:
     """Retrieve the OAuth object.
 
     :param app: dash.Dash
@@ -425,6 +482,10 @@ def get_oauth(app: dash.Dash = None) -> OAuth:
     """
     if app is None:
         app = dash.get_app()
+
+    oauth = getattr(app, "_dash_auth_plus_oidc_oauth", None)
+    if oauth is not None:
+        return oauth
 
     oauth = getattr(app.server, "extensions", {}).get(
         "authlib.integrations.flask_client"

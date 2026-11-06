@@ -5,6 +5,7 @@ flask
 werkzeug
 pytest
 authlib
+httpx
 black<=26.1.0
 clerk-sdk
 clerk-backend-api==3.0.1

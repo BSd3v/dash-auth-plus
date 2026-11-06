@@ -19,9 +19,9 @@ setup(
     long_description_content_type="text/markdown",
     install_requires=["dash>=4.5.0", "flask", "werkzeug", "python-dotenv"],
     extras_require={
-        "oidc": ["authlib"],
+        "oidc": ["authlib", "httpx"],
         "clerk": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"],
-        "all": ["authlib", "clerk-sdk", "clerk-backend-api==3.0.1"],
+        "all": ["authlib", "httpx", "clerk-sdk", "clerk-backend-api==3.0.1"],
     },
     python_requires=">=3.9",
     include_package_data=True,

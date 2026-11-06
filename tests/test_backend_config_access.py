@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import types
+from http.cookies import SimpleCookie
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
@@ -13,7 +14,7 @@ from werkzeug.routing import Map, Rule
 
 from dash_auth_plus.auth import Auth
 from dash_auth_plus.clerk_auth import ClerkAuth
-from dash_auth_plus.oidc_auth import OIDCAuth
+from dash_auth_plus.oidc_auth import OIDCAuth, get_oauth
 from dash_auth_plus.public_routes import add_public_routes, get_public_routes
 
 
@@ -170,6 +171,7 @@ def test_auth_protect_layouts_allows_page_container_routing_callbacks():
 
 
 def test_oidc_auth_accepts_fastapi_backend():
+    pytest.importorskip("starlette")
     added_routes = []
     backend = SimpleNamespace(
         server_type="fastapi",
@@ -184,7 +186,7 @@ def test_oidc_auth_accepts_fastapi_backend():
         reset_current_request=lambda token: None,
     )
 
-    with patch("dash_auth_plus.oidc_auth.OAuth", return_value=fake_oauth):
+    with patch("authlib.integrations.starlette_client.OAuth", return_value=fake_oauth):
         with patch.dict(
             sys.modules,
             {
@@ -199,6 +201,116 @@ def test_oidc_auth_accepts_fastapi_backend():
         "oidc_logout",
         "oidc_callback",
     ]
+    assert app._dash_auth_plus_oidc_oauth is fake_oauth
+    assert get_oauth(app) is fake_oauth
+
+
+def test_fastapi_oidc_login_and_callback_use_signed_session_cookie():
+    starlette_responses = pytest.importorskip("starlette.responses")
+    RedirectResponse = starlette_responses.RedirectResponse
+    Response = starlette_responses.Response
+    active_request = {}
+    added_routes = {}
+
+    class FakeRequest:
+        def __init__(self, path, cookies=None, query_params=None):
+            self.path = path
+            self.root = "https://example.test/"
+            self.headers = {}
+            self.cookies = cookies or {}
+            self.query_params = query_params or {}
+            self.scope = {"method": "GET"}
+            self.state = SimpleNamespace()
+
+        @property
+        def session(self):
+            return self.scope["session"]
+
+    class FakeOAuthClient:
+        client_kwargs = {"scope": "openid email"}
+
+        async def authorize_redirect(self, request, redirect_uri, **kwargs):
+            request.session["state_idp"] = {"state": "test-state"}
+            return RedirectResponse("https://idp.example/authorize", status_code=302)
+
+        async def authorize_access_token(self, request, **kwargs):
+            assert request.session.pop("state_idp") == {"state": "test-state"}
+            return {
+                "userinfo": {"email": "user@example.test"},
+                "refresh_token": "refresh-token",
+            }
+
+    class FakeOAuth:
+        def __init__(self):
+            self._registry = {}
+            self._clients = {}
+
+        def register(self, name, client_kwargs=None, **kwargs):
+            self._registry[name] = (None, {"client_kwargs": client_kwargs, **kwargs})
+            self._clients[name] = FakeOAuthClient()
+
+        def create_client(self, name):
+            return self._clients[name]
+
+    fake_oauth = FakeOAuth()
+
+    def set_current_request(request):
+        active_request["request"] = request
+        return None
+
+    def reset_current_request(_token):
+        active_request.clear()
+
+    backend = SimpleNamespace(
+        server_type="fastapi",
+        request_adapter=lambda: active_request["request"],
+        before_request=lambda _func: None,
+        add_url_rule=lambda *args, **kwargs: added_routes.setdefault(
+            kwargs["endpoint"], kwargs["view_func"]
+        ),
+        make_response=lambda body="", status=200, **_kwargs: Response(
+            content=body, status_code=status
+        ),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+    fake_fastapi = types.SimpleNamespace(Request=FakeRequest)
+    fake_dash_fastapi = types.SimpleNamespace(
+        set_current_request=set_current_request,
+        reset_current_request=reset_current_request,
+    )
+
+    with patch("authlib.integrations.starlette_client.OAuth", return_value=fake_oauth):
+        with patch.dict(
+            sys.modules,
+            {
+                "fastapi": fake_fastapi,
+                "dash.backends._fastapi": fake_dash_fastapi,
+            },
+        ):
+            oidc = OIDCAuth(app, secret_key="test-secret")
+            oidc.register_provider("idp", client_id="client", client_secret="secret")
+
+            login_request = FakeRequest("/oidc/idp/login")
+            login_response = asyncio.run(added_routes["oidc_login"]("idp", login_request))
+            cookie = SimpleCookie()
+            cookie.load(login_response.headers["set-cookie"])
+
+            callback_request = FakeRequest(
+                "/oidc/idp/callback",
+                cookies={
+                    oidc._session_cookie_name: cookie[
+                        oidc._session_cookie_name
+                    ].value
+                },
+            )
+            callback_response = asyncio.run(
+                added_routes["oidc_callback"]("idp", callback_request)
+            )
+
+    assert login_response.status_code == 302
+    assert login_response.headers["location"] == "https://idp.example/authorize"
+    assert callback_response.status_code == 302
+    assert oidc._get_session(callback_request)["user"]["email"] == "user@example.test"
 
 
 def test_fastapi_backend_uses_async_callback_hook():
