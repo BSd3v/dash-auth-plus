@@ -4,6 +4,8 @@ from dash_auth_plus import ClerkAuth
 import os
 import pytest
 import flask
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 
 def spinup_app():
@@ -161,10 +163,11 @@ def safe_redirect():
 
     ``object.__new__`` bypasses ``ClerkAuth.__init__``, so no Dash app or Clerk
     credentials are needed.  The method only uses ``self`` for dispatch and
-    reads ``flask.request`` when the supplied URL is absolute.
+    reads ``flask.request`` via an explicit request_obj argument when the
+    supplied URL is absolute.
     """
     instance = object.__new__(ClerkAuth)
-    return instance._get_safe_redirect_url
+    return lambda url: instance._get_safe_redirect_url(url, req=flask.request)
 
 
 @pytest.fixture
@@ -278,3 +281,213 @@ class TestGetSafeRedirectUrl:
     def test_different_port_rejected(self, safe_redirect, http_request_ctx):
         """Same host but different port is a different origin and must be rejected."""
         assert safe_redirect("http://example.com:9000/path") is None
+
+
+@pytest.mark.parametrize(
+    ("session_sid", "request_sid", "expected_sid"),
+    [
+        ("session-sid", "request-sid", "session-sid"),
+        (None, "request-sid", "request-sid"),
+    ],
+)
+def test_logout_revokes_clerk_session_once(session_sid, request_sid, expected_sid):
+    auth = object.__new__(ClerkAuth)
+    session_data = {"user": {}}
+    if session_sid:
+        session_data["sid"] = session_sid
+    response = object()
+    request_state = SimpleNamespace(
+        is_signed_in=True,
+        payload={"sid": request_sid},
+    )
+    revoke = Mock()
+    auth._get_request = Mock(return_value=object())
+    auth._get_session = Mock(return_value=session_data)
+    auth.before_logout = Mock()
+    auth._build_clerk_request = Mock(return_value={})
+    auth.authenticate_request_options = Mock(return_value={})
+    auth.allowed_parties = []
+    auth.clerk_client = SimpleNamespace(
+        authenticate_request=Mock(return_value=request_state),
+        sessions=SimpleNamespace(revoke=revoke),
+    )
+    auth.app = SimpleNamespace(
+        backend=SimpleNamespace(make_response=Mock(return_value=response)),
+        config={},
+    )
+    auth.logout_page = "Logged out"
+    auth.clerk_script = ""
+    auth._clear_clerk_cookies = Mock()
+    auth._clear_session_cookie = Mock(return_value=response)
+
+    auth.logout()
+
+    revoke.assert_called_once_with(session_id=expected_sid)
+
+
+def test_after_logged_in_custom_callback_persists_signed_session_cookie():
+    auth = object.__new__(ClerkAuth)
+    session_data = {"custom": "value", "user": {}}
+
+    auth._get_request = Mock(return_value=object())
+    auth._get_session = Mock(return_value=session_data)
+    auth._set_session_cookie = Mock(return_value="saved")
+    auth._redirect_response = Mock()
+    auth.log_signins = False
+    auth._user_groups = None
+
+    response_obj = SimpleNamespace(set_cookie=Mock())
+    make_response_mock = Mock(return_value=response_obj)
+    auth.app = SimpleNamespace(
+        backend=SimpleNamespace(make_response=make_response_mock)
+    )
+
+    callback_calls = []
+
+    def custom_callback(user, idp):
+        callback_calls.append((user, idp))
+        session_data["user"] = {"email": "custom@example.com", "role": "admin"}
+        return "custom-response"
+
+    auth.login_user_callback = custom_callback
+
+    user = SimpleNamespace(
+        id="u_123",
+        username="user123",
+        primary_email_address_id="e_1",
+        email_addresses=[SimpleNamespace(id="e_1", email_address="u@example.com")],
+    )
+
+    result = auth.after_logged_in(user, "sess_123")
+
+    assert result == "saved"
+    assert callback_calls == [(user, "clerk")]
+    assert session_data["sid"] == "sess_123"
+    make_response_mock.assert_called_once_with("custom-response")
+    auth._set_session_cookie.assert_called_once_with(response_obj, session_data)
+
+
+def test_after_logged_in_custom_callback_supports_three_arguments():
+    auth = object.__new__(ClerkAuth)
+    session_data = {}
+
+    auth._get_request = Mock(return_value=object())
+    auth._get_session = Mock(return_value=session_data)
+    auth._set_session_cookie = Mock(return_value="saved")
+    auth.log_signins = False
+    auth._user_groups = None
+
+    response_obj = SimpleNamespace(set_cookie=Mock())
+    auth.app = SimpleNamespace(
+        backend=SimpleNamespace(make_response=Mock(return_value=response_obj))
+    )
+
+    captured = {}
+
+    def custom_callback(user, idp, sid):
+        captured["values"] = (user, idp, sid)
+        return response_obj
+
+    auth.login_user_callback = custom_callback
+
+    user = SimpleNamespace(
+        id="u_123",
+        username="user123",
+        primary_email_address_id="e_1",
+        email_addresses=[SimpleNamespace(id="e_1", email_address="u@example.com")],
+    )
+
+    result = auth.after_logged_in(user, "sess_123")
+
+    assert result == "saved"
+    assert captured["values"] == (user, "clerk", "sess_123")
+    assert session_data["user"]["clerk_user_id"] == "u_123"
+    assert session_data["sid"] == "sess_123"
+    auth._set_session_cookie.assert_called_once_with(response_obj, session_data)
+
+
+def test_after_logged_in_custom_callback_mirrors_flask_session_user():
+    auth = object.__new__(ClerkAuth)
+    session_data = {}
+
+    auth._get_request = Mock(return_value=object())
+    auth._get_session = Mock(return_value=session_data)
+    auth._set_session_cookie = Mock(return_value="saved")
+    auth.log_signins = False
+    auth._user_groups = None
+    auth.app = SimpleNamespace(
+        backend=SimpleNamespace(make_response=Mock(return_value=SimpleNamespace(set_cookie=Mock())))
+    )
+
+    def custom_callback(_user, _idp):
+        flask.session["user"] = {
+            "email": "custom@example.com",
+            "role": "admin",
+        }
+        return "ok"
+
+    auth.login_user_callback = custom_callback
+    user = SimpleNamespace(
+        id="u_123",
+        username="user123",
+        primary_email_address_id="e_1",
+        email_addresses=[SimpleNamespace(id="e_1", email_address="u@example.com")],
+    )
+
+    flask_app = flask.Flask(__name__)
+    flask_app.secret_key = "test-secret"
+    with flask_app.test_request_context("/"):
+        result = auth.after_logged_in(user, "sess_123")
+
+    assert result == "saved"
+    assert session_data["user"]["email"] == "custom@example.com"
+    assert session_data["user"]["role"] == "admin"
+    assert session_data["sid"] == "sess_123"
+
+
+def test_after_logged_in_refreshes_stale_identity_and_sid():
+    auth = object.__new__(ClerkAuth)
+    session_data = {
+        "user": {
+            "clerk_user_id": "old_user",
+            "userid": "old_username",
+            "email": "old@example.com",
+            "groups": ["old-group"],
+        },
+        "sid": "old_session",
+    }
+
+    auth._get_request = Mock(return_value=object())
+    auth._get_session = Mock(return_value=session_data)
+    auth._set_session_cookie = Mock(return_value="saved")
+    auth.log_signins = False
+    auth._user_groups = None
+    response_obj = SimpleNamespace(set_cookie=Mock())
+    auth.login_user_callback = Mock(return_value=response_obj)
+    auth.app = SimpleNamespace(
+        backend=SimpleNamespace(make_response=Mock(return_value=response_obj))
+    )
+
+    user = SimpleNamespace(
+        id="u_456",
+        username="new_user",
+        primary_email_address_id="e_2",
+        email_addresses=[SimpleNamespace(id="e_2", email_address="new@example.com")],
+    )
+
+    flask_app = flask.Flask(__name__)
+    flask_app.secret_key = "test-secret"
+    with flask_app.test_request_context("/"):
+        flask.session["user"] = {
+            "clerk_user_id": "old_user",
+            "email": "old@example.com",
+            "role": "admin",
+        }
+        auth.after_logged_in(user, "new_session")
+
+    assert session_data["user"] == {
+        "clerk_user_id": "u_456",
+        "userid": "new_user",
+        "email": "new@example.com",
+    }
+    assert session_data["sid"] == "new_session"

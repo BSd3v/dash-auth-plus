@@ -1,0 +1,570 @@
+import asyncio
+import sys
+import types
+from http.cookies import SimpleCookie
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import patch
+
+import pytest
+from dash import Dash
+from flask import Flask, session
+from itsdangerous import URLSafeSerializer
+from werkzeug.routing import Map, Rule
+
+from dash_auth_plus.auth import Auth
+from dash_auth_plus.clerk_auth import ClerkAuth
+from dash_auth_plus.oidc_auth import OIDCAuth, get_oauth
+from dash_auth_plus.public_routes import add_public_routes, get_public_routes
+
+
+class DummyAuth(Auth):
+    def is_authorized(self):
+        return True
+
+    def login_request(self):
+        return None
+
+
+class DenyAuth(Auth):
+    def is_authorized(self):
+        return False
+
+    def login_request(self):
+        return "login"
+
+
+class AllowAuth(Auth):
+    def is_authorized(self):
+        return True
+
+    def login_request(self):
+        return "login"
+
+
+def test_auth_config_helpers_support_non_flask_server_config():
+    auth = cast(Any, object.__new__(DummyAuth))
+    auth.app = SimpleNamespace(
+        config={"SESSION_COOKIE_SECURE": True},
+        server=SimpleNamespace(),
+    )
+
+    assert auth._session_cookie_secure is True
+    auth._set_secret_key("test-secret")
+    assert auth._get_secret_key() == "test-secret"
+
+
+def test_public_routes_stored_in_dash_config():
+    app = Dash(__name__)
+    add_public_routes(app, ["/public"])
+
+    public_routes = get_public_routes(app)
+    assert public_routes.test("/public")
+
+
+def test_normalized_request_path_strips_url_base_pathname_prefix():
+    auth = cast(Any, object.__new__(DummyAuth))
+    auth.app = SimpleNamespace(
+        config={"url_base_pathname": "/dash/"},
+        server=SimpleNamespace(),
+    )
+
+    assert auth._normalized_request_path("/dash/public") == "/public"
+    assert auth._normalized_request_path("/dash") == "/"
+    assert auth._normalized_request_path("/public") == "/public"
+
+
+def test_path_matches_map_with_prefixed_path():
+    auth = cast(Any, object.__new__(DummyAuth))
+    auth.app = SimpleNamespace(
+        config={"url_base_pathname": "/dash/"},
+        server=SimpleNamespace(),
+    )
+    route_map = Map([Rule("/public")]).bind("")
+
+    assert auth._path_matches_map(route_map, "/dash/public") is True
+
+
+def test_get_callback_body_async_awaits_quart_style_get_json():
+    auth = cast(Any, object.__new__(DummyAuth))
+    auth.app = SimpleNamespace(config={}, server=SimpleNamespace())
+
+    class AsyncReq:
+        async def get_json(self):
+            return {"output": "x", "inputs": []}
+
+    body = asyncio.run(auth._get_callback_body_async(AsyncReq()))
+    assert body == {"output": "x", "inputs": []}
+
+
+def test_is_stream_transport_request_detects_dash_stream_payloads():
+    assert Auth._is_stream_transport_request({"streamDownlink": {"requestId": "1"}})
+    assert Auth._is_stream_transport_request({"streamCancel": {"requestId": "1"}})
+    assert not Auth._is_stream_transport_request({"output": "component.children"})
+
+
+def test_sync_flask_session_helpers_support_flask_request_context():
+    auth = cast(Any, object.__new__(DummyAuth))
+    auth.app = SimpleNamespace(config={}, server=SimpleNamespace())
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    with app.test_request_context("/", method="GET"):
+        auth._sync_flask_session({"user": {"email": "a.b@mail.com"}, "idp": "oidc"})
+        assert session["user"]["email"] == "a.b@mail.com"
+        assert session["idp"] == "oidc"
+
+        auth._clear_flask_session()
+        assert "user" not in session
+        assert "idp" not in session
+
+
+def test_sync_flask_session_replaces_existing_keys():
+    auth = cast(Any, object.__new__(DummyAuth))
+    auth.app = SimpleNamespace(config={}, server=SimpleNamespace())
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    with app.test_request_context("/", method="GET"):
+        session["refresh_token"] = "stale"
+        auth._sync_flask_session({"user": {"email": "a.b@mail.com"}})
+        assert session["user"]["email"] == "a.b@mail.com"
+        assert "refresh_token" not in session
+
+
+def test_clear_request_session_resets_cached_session():
+    auth = cast(Any, object.__new__(DummyAuth))
+    auth.app = SimpleNamespace(config={}, server=SimpleNamespace())
+    request = SimpleNamespace(context={})
+
+    auth._context_set(request.context, "_dash_auth_plus_session", {"user": {"id": 1}})
+    auth._clear_request_session(request)
+
+    assert auth._context_get(request.context, "_dash_auth_plus_session") == {}
+
+
+def test_auth_protect_layouts_allows_page_container_routing_callbacks():
+    captured = {}
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=lambda: {
+            "inputs": [{"property": "pathname", "value": "/private"}],
+            "outputs": [{"id": "_pages_content", "property": "children"}],
+        },
+    )
+    backend = SimpleNamespace(
+        server_type="flask",
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+
+    with patch("dash_auth_plus.auth.protect_layouts"):
+        auth = DenyAuth(
+            app,
+            auth_protect_layouts=True,
+            page_container="_pages_content",
+        )
+
+    assert auth is app._dash_auth_plus_auth
+    assert captured["hook"]() is None
+
+
+def test_oidc_auth_accepts_fastapi_backend():
+    pytest.importorskip("starlette")
+    added_routes = []
+    backend = SimpleNamespace(
+        server_type="fastapi",
+        before_request=lambda func: None,
+        add_url_rule=lambda *args, **kwargs: added_routes.append((args, kwargs)),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+    fake_oauth = SimpleNamespace(_registry={}, _clients={})
+    fake_fastapi = types.SimpleNamespace(Request=object)
+    fake_dash_fastapi = types.SimpleNamespace(
+        set_current_request=lambda request: "token",
+        reset_current_request=lambda token: None,
+    )
+
+    with patch("authlib.integrations.starlette_client.OAuth", return_value=fake_oauth):
+        with patch.dict(
+            sys.modules,
+            {
+                "fastapi": fake_fastapi,
+                "dash.backends._fastapi": fake_dash_fastapi,
+            },
+        ):
+            OIDCAuth(app, secret_key="Test")
+
+    assert [kwargs["endpoint"] for _, kwargs in added_routes] == [
+        "oidc_login",
+        "oidc_logout",
+        "oidc_callback",
+    ]
+    assert app._dash_auth_plus_oidc_oauth is fake_oauth
+    assert get_oauth(app) is fake_oauth
+
+
+def test_fastapi_oidc_automatic_login_redirects_to_async_login_route():
+    Response = pytest.importorskip("starlette.responses").Response
+    captured = {}
+    request = SimpleNamespace(
+        path="/private",
+        root="https://example.test/",
+        headers={},
+        cookies={},
+        scope={"method": "GET"},
+        state=SimpleNamespace(),
+    )
+    fake_oauth = SimpleNamespace(
+        _registry={"idp": (None, {})},
+        _clients={"idp": object()},
+    )
+    backend = SimpleNamespace(
+        server_type="fastapi",
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+        add_url_rule=lambda *args, **kwargs: None,
+        make_response=lambda body="", status=200, **_kwargs: Response(
+            content=body, status_code=status
+        ),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+    fake_fastapi = types.SimpleNamespace(Request=object)
+    fake_dash_fastapi = types.SimpleNamespace(
+        set_current_request=lambda _request: None,
+        reset_current_request=lambda _token: None,
+    )
+
+    with patch("authlib.integrations.starlette_client.OAuth", return_value=fake_oauth):
+        with patch.dict(
+            sys.modules,
+            {
+                "fastapi": fake_fastapi,
+                "dash.backends._fastapi": fake_dash_fastapi,
+            },
+        ):
+            OIDCAuth(app, secret_key="test-secret")
+            response = asyncio.run(captured["hook"]())
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/oidc/idp/login"
+
+
+def test_fastapi_oidc_login_and_callback_use_signed_session_cookie():
+    starlette_responses = pytest.importorskip("starlette.responses")
+    RedirectResponse = starlette_responses.RedirectResponse
+    Response = starlette_responses.Response
+    active_request = {}
+    added_routes = {}
+
+    class FakeRequest:
+        def __init__(self, path, cookies=None, query_params=None):
+            self.path = path
+            self.root = "https://example.test/"
+            self.headers = {}
+            self.cookies = cookies or {}
+            self.query_params = query_params or {}
+            self.scope = {"method": "GET"}
+            self.state = SimpleNamespace()
+
+        @property
+        def session(self):
+            return self.scope["session"]
+
+    class FakeOAuthClient:
+        client_kwargs = {"scope": "openid email"}
+
+        async def authorize_redirect(self, request, redirect_uri, **kwargs):
+            request.session["state_idp"] = {"state": "test-state"}
+            return RedirectResponse("https://idp.example/authorize", status_code=302)
+
+        async def authorize_access_token(self, request, **kwargs):
+            assert request.session.pop("state_idp") == {"state": "test-state"}
+            return {
+                "userinfo": {"email": "user@example.test"},
+                "refresh_token": "refresh-token",
+            }
+
+    class FakeOAuth:
+        def __init__(self):
+            self._registry = {}
+            self._clients = {}
+
+        def register(self, name, client_kwargs=None, **kwargs):
+            self._registry[name] = (None, {"client_kwargs": client_kwargs, **kwargs})
+            self._clients[name] = FakeOAuthClient()
+
+        def create_client(self, name):
+            return self._clients[name]
+
+    fake_oauth = FakeOAuth()
+
+    def set_current_request(request):
+        active_request["request"] = request
+        return None
+
+    def reset_current_request(_token):
+        active_request.clear()
+
+    backend = SimpleNamespace(
+        server_type="fastapi",
+        request_adapter=lambda: active_request["request"],
+        before_request=lambda _func: None,
+        add_url_rule=lambda *args, **kwargs: added_routes.setdefault(
+            kwargs["endpoint"], kwargs["view_func"]
+        ),
+        make_response=lambda body="", status=200, **_kwargs: Response(
+            content=body, status_code=status
+        ),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+    fake_fastapi = types.SimpleNamespace(Request=FakeRequest)
+    fake_dash_fastapi = types.SimpleNamespace(
+        set_current_request=set_current_request,
+        reset_current_request=reset_current_request,
+    )
+
+    with patch("authlib.integrations.starlette_client.OAuth", return_value=fake_oauth):
+        with patch.dict(
+            sys.modules,
+            {
+                "fastapi": fake_fastapi,
+                "dash.backends._fastapi": fake_dash_fastapi,
+            },
+        ):
+            oidc = OIDCAuth(app, secret_key="test-secret")
+            oidc.register_provider("idp", client_id="client", client_secret="secret")
+
+            login_request = FakeRequest("/oidc/idp/login")
+            login_response = asyncio.run(added_routes["oidc_login"]("idp", login_request))
+            cookie = SimpleCookie()
+            cookie.load(login_response.headers["set-cookie"])
+
+            callback_request = FakeRequest(
+                "/oidc/idp/callback",
+                cookies={
+                    oidc._session_cookie_name: cookie[
+                        oidc._session_cookie_name
+                    ].value
+                },
+            )
+            callback_response = asyncio.run(
+                added_routes["oidc_callback"]("idp", callback_request)
+            )
+
+    assert login_response.status_code == 302
+    assert login_response.headers["location"] == "https://idp.example/authorize"
+    assert callback_response.status_code == 302
+    assert oidc._get_session(callback_request)["user"]["email"] == "user@example.test"
+
+
+def test_fastapi_backend_uses_async_callback_hook():
+    captured = {}
+
+    async def get_json():
+        return {
+            "inputs": [{"property": "pathname", "value": "/public"}],
+            "outputs": [{"id": "_pages_content", "property": "children"}],
+        }
+
+    request = SimpleNamespace(path="/_dash-update-component", get_json=get_json)
+    backend = SimpleNamespace(
+        server_type="fastapi",
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+    add_public_routes(app, ["/public"])
+
+    auth = DenyAuth(app, page_container="_pages_content")
+
+    assert auth is app._dash_auth_plus_auth
+    assert asyncio.run(captured["hook"]()) is None
+
+
+def test_stream_transport_defers_to_backend_verification_on_protected_endpoint():
+    captured = {}
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=lambda: {"streamDownlink": {"requestId": "r1"}},
+        headers={"referer": "http://localhost/private"},
+    )
+    backend = SimpleNamespace(
+        server_type="flask",
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+
+    DenyAuth(app)
+
+    assert captured["hook"]() is None
+
+
+@pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
+@pytest.mark.parametrize("transport", ["streamDownlink", "streamCancel"])
+def test_stream_transport_allows_backend_verified_transport_without_auth(
+    server_type, transport
+):
+    captured = {}
+
+    async def get_json():
+        return {transport: {"requestId": "r1"}}
+
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=(
+            (lambda: {transport: {"requestId": "r1"}})
+            if server_type == "flask"
+            else get_json
+        ),
+        headers={"referer": "http://localhost/public"},
+    )
+    backend = SimpleNamespace(
+        server_type=server_type,
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+
+    DenyAuth(app, public_routes=["/public"])
+
+    result = captured["hook"]()
+    if server_type != "flask":
+        result = asyncio.run(result)
+    assert result is None
+
+
+@pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
+@pytest.mark.parametrize("transport", ["streamDownlink", "streamCancel"])
+def test_stream_transport_allows_seeded_request_id_for_protected_callback(
+    server_type, transport
+):
+    captured = {}
+    request_state = {"mode": "seed"}
+
+    def _body_for_mode():
+        if request_state["mode"] == "seed":
+            return {
+                "output": "protected-stream-status.children",
+                "streamConnection": {"requestId": "r1"},
+            }
+        return {transport: {"requestId": "r1"}}
+
+    async def get_json():
+        return _body_for_mode()
+
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=(
+            (lambda: _body_for_mode())
+            if server_type == "flask"
+            else get_json
+        ),
+        headers={"referer": "http://localhost/public"},
+    )
+    backend = SimpleNamespace(
+        server_type=server_type,
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+    app._dash_auth_plus_protected_callbacks = ["protected-stream-status.children"]
+
+    DenyAuth(app, public_routes=["/public"])
+
+    # Seed request id from an allowed protected callback invocation.
+    seed_result = captured["hook"]()
+    if server_type != "flask":
+        seed_result = asyncio.run(seed_result)
+    assert seed_result is None
+
+    # Follow-up transport request should be accepted for the seeded request id.
+    request_state["mode"] = "transport"
+    transport_result = captured["hook"]()
+    if server_type != "flask":
+        transport_result = asyncio.run(transport_result)
+    assert transport_result is None
+
+
+@pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
+@pytest.mark.parametrize("transport", ["streamDownlink", "streamCancel"])
+def test_stream_transport_allows_authorized_user_on_protected_endpoint(
+    server_type, transport
+):
+    captured = {}
+
+    async def get_json():
+        return {transport: {"requestId": "r1"}}
+
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=(
+            (lambda: {transport: {"requestId": "r1"}})
+            if server_type == "flask"
+            else get_json
+        ),
+        headers={"referer": "http://localhost/private"},
+    )
+    backend = SimpleNamespace(
+        server_type=server_type,
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+
+    AllowAuth(app)
+
+    result = captured["hook"]()
+    if server_type != "flask":
+        result = asyncio.run(result)
+    assert result is None
+
+
+def test_clerk_auth_uses_base_session_loader_with_custom_serializer():
+    auth = cast(Any, object.__new__(ClerkAuth))
+    auth.app = SimpleNamespace(config={}, server=SimpleNamespace())
+    auth._clerk_session_serializer = URLSafeSerializer(
+        "test-secret",
+        salt="dash-auth-plus-clerk-session",
+    )
+    payload = {"user": {"email": "a.b@mail.com"}}
+    request = SimpleNamespace(
+        cookies={"dash_auth_plus_session": auth._clerk_session_serializer.dumps(payload)}
+    )
+
+    assert auth._get_session(request) == payload
+
+
+@pytest.mark.parametrize("server_type", ["flask", "quart", "fastapi"])
+def test_protected_callback_output_precedes_stream_transport_gate(server_type):
+    captured = {}
+
+    body = {
+        "output": "protected-stream-status.children",
+        "streamDownlink": {"requestId": "r1"},
+    }
+
+    async def get_json():
+        return body
+
+    request = SimpleNamespace(
+        path="/_dash-update-component",
+        get_json=((lambda: body) if server_type == "flask" else get_json),
+        headers={"referer": "http://localhost/public"},
+    )
+    backend = SimpleNamespace(
+        server_type=server_type,
+        request_adapter=lambda: request,
+        before_request=lambda func: captured.setdefault("hook", func),
+    )
+    app = cast(Any, SimpleNamespace(config={}, server=SimpleNamespace(), backend=backend))
+    app._dash_auth_plus_protected_callbacks = ["protected-stream-status.children"]
+
+    DenyAuth(app)
+
+    result = captured["hook"]()
+    if server_type != "flask":
+        result = asyncio.run(result)
+    assert result is None

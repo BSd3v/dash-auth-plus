@@ -1,8 +1,11 @@
 import asyncio
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
+import dash
 from dash_auth_plus import list_groups, check_groups, protected
+from dash_auth_plus.group_protection import protected_callback
 from flask import Flask, session
 
 
@@ -392,3 +395,324 @@ def test_gp015_callable_groups_posonly_path_in_lookup_raises_clear_error():
 
         with pytest.raises(TypeError, match="positional-only 'path' parameter"):
             check_groups(groups_with_posonly_path, group_lookup={"path": "/from-lookup"})
+
+
+def test_gp016_list_groups_falls_back_to_dash_auth_session():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    fake_dash_app = SimpleNamespace(
+        _dash_auth_plus_auth=SimpleNamespace(
+            _get_session=lambda: {
+                "user": {
+                    "email": "a.b@mail.com",
+                    "groups": ["admin"],
+                    "tenant": "ABC",
+                }
+            }
+        )
+    )
+
+    with app.test_request_context("/", method="GET"):
+        with patch(
+            "dash_auth_plus.group_protection.dash.get_app",
+            return_value=fake_dash_app,
+        ):
+            assert list_groups() == ["admin"]
+            assert list_groups(groups_key="tenant", groups_str_split=",") == ["ABC"]
+
+
+def test_gp017_check_groups_falls_back_to_dash_auth_session():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    fake_dash_app = SimpleNamespace(
+        _dash_auth_plus_auth=SimpleNamespace(
+            _get_session=lambda: {
+                "user": {
+                    "email": "a.b@mail.com",
+                    "groups": ["admin"],
+                }
+            }
+        )
+    )
+
+    with app.test_request_context("/", method="GET"):
+        with patch(
+            "dash_auth_plus.group_protection.dash.get_app",
+            return_value=fake_dash_app,
+        ):
+            assert check_groups(["admin"]) is True
+            assert check_groups(["viewer"]) is False
+
+
+def test_gp018_protected_async_generator_authorized_streams_values():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    async def stream_func():
+        yield "step-1"
+        yield "step-2"
+
+    async def collect(async_iterable):
+        values = []
+        async for item in async_iterable:
+            values.append(item)
+        return values
+
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        wrapped = protected(
+            unauthenticated_output="unauthenticated",
+            missing_permissions_output="forbidden",
+            groups=["default"],
+        )(stream_func)
+
+        assert asyncio.run(collect(wrapped())) == ["step-1", "step-2"]
+
+
+def test_gp019_protected_async_generator_uses_fallback_without_manual_auth_check():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    async def stream_func():
+        yield "should-not-run"
+
+    async def collect(async_iterable):
+        values = []
+        async for item in async_iterable:
+            values.append(item)
+        return values
+
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        wrapped = protected(
+            unauthenticated_output="unauthenticated",
+            missing_permissions_output="forbidden",
+            groups=["admin"],
+        )(stream_func)
+
+        assert asyncio.run(collect(wrapped())) == ["forbidden"]
+
+        del session["user"]
+        assert asyncio.run(collect(wrapped())) == ["unauthenticated"]
+
+
+def test_gp020_protected_callback_async_generator_unauth_yields_default_fallback():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    async def collect(async_iterable):
+        values = []
+        async for item in async_iterable:
+            values.append(item)
+        return values
+
+    with app.test_request_context("/", method="GET"):
+        with patch("dash_auth_plus.group_protection.dash.callback") as callback_mock:
+            callback_mock.side_effect = lambda *a, **k: (lambda f: f)
+
+            @protected_callback()
+            async def stream_func():
+                yield "should-not-run"
+
+            assert asyncio.run(collect(stream_func())) == [dash.no_update]
+
+
+def test_gp021_protected_callback_async_generator_forbidden_yields_default_fallback():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    async def collect(async_iterable):
+        values = []
+        async for item in async_iterable:
+            values.append(item)
+        return values
+
+    with app.test_request_context("/", method="GET"):
+        session["user"] = {
+            "email": "a.b@mail.com",
+            "groups": ["default"],
+        }
+
+        with patch("dash_auth_plus.group_protection.dash.callback") as callback_mock:
+            callback_mock.side_effect = lambda *a, **k: (lambda f: f)
+
+            @protected_callback(groups=["admin"])
+            async def stream_func():
+                yield "should-not-run"
+
+            assert asyncio.run(collect(stream_func())) == [dash.no_update]
+
+
+def test_gp022_protected_callback_registers_callback_id_for_middleware_allowlist():
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    with app.test_request_context("/", method="GET"):
+        fake_dash_app = SimpleNamespace(_dash_auth_plus_public_callbacks=[])
+
+        with patch("dash_auth_plus.group_protection.get_app", return_value=fake_dash_app):
+            callback_map = {}
+
+            def fake_callback(*_a, **_k):
+                def decorator(f):
+                    callback_map["callback-id-1"] = {"callback": f}
+                    return f
+
+                return decorator
+
+            with patch("dash_auth_plus.group_protection.dash.callback", side_effect=fake_callback):
+                with patch(
+                    "dash_auth_plus.group_protection.GLOBAL_CALLBACK_MAP",
+                    callback_map,
+                ):
+
+                    @protected_callback()
+                    async def stream_func():
+                        yield "x"
+
+                    assert "callback-id-1" in fake_dash_app._dash_auth_plus_public_callbacks
+                    assert "callback-id-1" in fake_dash_app._dash_auth_plus_protected_callbacks
+
+
+@pytest.mark.parametrize("flask_session", [True, False])
+@pytest.mark.parametrize("fallback_type", ["default", "static", "async", "stream"])
+def test_protected_stream_rechecks_authentication_before_each_yield(
+    flask_session, fallback_type
+):
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    auth = SimpleNamespace(
+        is_authorized=Mock(side_effect=[True, False]),
+        _get_session=lambda: {"user": {"email": "a.b@mail.com", "groups": []}},
+    )
+    fake_dash_app = SimpleNamespace(_dash_auth_plus_auth=auth)
+    closed = []
+
+    async def async_fallback():
+        return "unauthenticated"
+
+    async def stream_fallback():
+        yield "unauthenticated"
+
+    fallback_kwargs = {
+        "default": {},
+        "static": {"unauthenticated_output": "unauthenticated"},
+        "async": {"unauthenticated_output": async_fallback},
+        "stream": {"unauthenticated_output": stream_fallback},
+    }[fallback_type]
+
+    async def collect(stream):
+        return [item async for item in stream]
+
+    with app.test_request_context("/_dash-update-component", method="POST"):
+        if flask_session:
+            session["user"] = {"email": "a.b@mail.com", "groups": []}
+        with patch("dash_auth_plus.group_protection.get_app", return_value=fake_dash_app):
+            with patch(
+                "dash_auth_plus.group_protection.dash.get_app",
+                return_value=fake_dash_app,
+            ):
+                with patch("dash_auth_plus.group_protection.dash.callback") as callback:
+                    callback.side_effect = lambda *a, **k: (lambda f: f)
+
+                    @protected_callback(**fallback_kwargs)
+                    async def stream_func():
+                        try:
+                            yield "step-1"
+                            yield "must-not-leak"
+                            yield "must-not-run"
+                        finally:
+                            closed.append(True)
+
+                    expected_fallback = (
+                        dash.no_update if fallback_type == "default" else "unauthenticated"
+                    )
+                    assert asyncio.run(collect(stream_func())) == [
+                        "step-1",
+                        expected_fallback,
+                    ]
+                    assert auth.is_authorized.call_count == 2
+                    assert closed == [True]
+
+
+@pytest.mark.parametrize("initial_state", ["unauthenticated", "forbidden", "allowed"])
+def test_protected_stream_initial_authorization_precedes_rechecks(initial_state):
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+    auth = SimpleNamespace(is_authorized=Mock(return_value=True))
+    fake_dash_app = SimpleNamespace(_dash_auth_plus_auth=auth)
+    called = []
+
+    async def collect(stream):
+        return [item async for item in stream]
+
+    with app.test_request_context("/_dash-update-component", method="POST"):
+        if initial_state != "unauthenticated":
+            session["user"] = {
+                "email": "a.b@mail.com",
+                "groups": ["admin"] if initial_state == "allowed" else [],
+            }
+        with patch("dash_auth_plus.group_protection.get_app", return_value=fake_dash_app):
+            with patch("dash_auth_plus.group_protection.dash.callback") as callback:
+                callback.side_effect = lambda *a, **k: (lambda f: f)
+
+                @protected_callback(
+                    groups=["admin"],
+                    unauthenticated_output="unauthenticated",
+                    missing_permissions_output="forbidden",
+                )
+                async def stream_func():
+                    called.append(True)
+                    yield "step-1"
+                    yield "step-2"
+
+                expected = (
+                    ["step-1", "step-2"]
+                    if initial_state == "allowed"
+                    else [initial_state]
+                )
+                assert asyncio.run(collect(stream_func())) == expected
+                assert called == ([True] if initial_state == "allowed" else [])
+                assert auth.is_authorized.call_count == (
+                    2 if initial_state == "allowed" else 0
+                )
+
+
+@pytest.mark.parametrize("protected_stream", [True, False])
+def test_stream_session_loss_without_auth_backend(protected_stream):
+    app = Flask(__name__)
+    app.secret_key = "Test!"
+
+    async def collect(stream):
+        return [item async for item in stream]
+
+    with app.test_request_context("/_dash-update-component", method="POST"):
+        session["user"] = {"email": "a.b@mail.com", "groups": []}
+        with patch(
+            "dash_auth_plus.group_protection.get_app",
+            return_value=SimpleNamespace(),
+        ):
+            with patch("dash_auth_plus.group_protection.dash.callback") as callback:
+                callback.side_effect = lambda *a, **k: (lambda f: f)
+                decorator = protected_callback if protected_stream else protected
+
+                @decorator(unauthenticated_output="unauthenticated")
+                async def stream_func():
+                    yield "step-1"
+                    del session["user"]
+                    yield "step-2"
+
+                assert asyncio.run(collect(stream_func())) == [
+                    "step-1",
+                    "unauthenticated" if protected_stream else "step-2",
+                ]

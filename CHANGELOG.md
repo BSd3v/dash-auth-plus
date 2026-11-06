@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Changed
+- Updated Dash requirement to `>=4.5.0`.
+- Updated minimum Python version to 3.9 to align with supported Dash 4.5 runtimes.
+
+### Fixed
+- Allowed Dash 4.5 streaming transport callback payloads (`streamDownlink` and
+	`streamCancel`) through auth middleware so streamed callbacks can complete
+	correctly.
+
 ## [0.0.1a4] - 2025-12-05
 ### Added
 - Added support for Clerk Provider themes, as well as ids for support with callbacks

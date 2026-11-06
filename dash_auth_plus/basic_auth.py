@@ -1,10 +1,11 @@
 import base64
+import binascii
 import logging
 from typing import Dict, List, Optional, Union, Callable
-import flask
 from dash import Dash
 
 from .auth import Auth
+from .public_routes import get_public_callbacks
 
 UserGroups = Dict[str, List[str]]
 
@@ -65,7 +66,7 @@ class BasicAuth(Auth):
         self._auth_func = auth_func
         self._user_groups = user_groups
         if secret_key is not None:
-            app.server.secret_key = secret_key
+            self._set_secret_key(secret_key)
 
         if self._auth_func is not None:
             if username_password_list is not None:
@@ -87,38 +88,62 @@ class BasicAuth(Auth):
                     else {k: v for k, v in username_password_list}
                 )
 
+    def _protect(self):
+        super()._protect()
+        if getattr(self.app.backend, "server_type", None) not in {"quart", "fastapi"}:
+            return
+
+        async def authenticate_public_callback():
+            req = self._get_request()
+            if self._normalized_request_path(req.path) == "/_dash-update-component":
+                body = await self._get_callback_body_async(req)
+                if body.get("output") in get_public_callbacks(self.app):
+                    self.is_authorized()
+
+        self.app.backend.before_request(authenticate_public_callback)
+
     def is_authorized(self):
-        header = flask.request.headers.get("Authorization", None)
-        if not header:
-            return False
-        username_password = base64.b64decode(header.split("Basic ")[1])
-        username_password_utf8 = username_password.decode("utf-8")
-        username, password = username_password_utf8.split(":", 1)
+        req = self._get_request()
+        header = req.headers.get("Authorization")
         authorized = False
-        if self._auth_func is not None:
+        if header:
             try:
-                authorized = self._auth_func(username, password)
-            except Exception:
-                logging.exception("Error in authorization function.")
-                return False
-        else:
-            authorized = self._users.get(username) == password
+                scheme, credentials = header.split(" ", 1)
+                if scheme.lower() == "basic":
+                    username_password = base64.b64decode(credentials, validate=True)
+                    username, password = username_password.decode("utf-8").split(":", 1)
+                    if self._auth_func is not None:
+                        try:
+                            authorized = self._auth_func(username, password)
+                        except Exception:
+                            logging.exception("Error in authorization function.")
+                    else:
+                        authorized = self._users.get(username) == password
+            except (ValueError, binascii.Error):
+                pass
         if authorized:
             try:
-                flask.session["user"] = {"email": username, "groups": []}
+                session_data = self._get_session(req)
+                session_data["user"] = {"email": username, "groups": []}
                 if callable(self._user_groups):
-                    flask.session["user"]["groups"] = self._user_groups(username)
+                    session_data["user"]["groups"] = self._user_groups(username)
                 elif self._user_groups:
-                    flask.session["user"]["groups"] = self._user_groups.get(
-                        username, []
-                    )
+                    session_data["user"]["groups"] = self._user_groups.get(username, [])
+                self._sync_flask_session(session_data)
+            except RuntimeError:
+                logging.warning("Session is not available. Have you set a secret key?")
+        else:
+            self._clear_request_session(req)
+            try:
+                self._clear_flask_session()
             except RuntimeError:
                 logging.warning("Session is not available. Have you set a secret key?")
         return authorized
 
     def login_request(self):
-        return flask.Response(
+        response = self.app.backend.make_response(
             "Login Required",
-            headers={"WWW-Authenticate": 'Basic realm="User Visible Realm"'},
             status=401,
         )
+        response.headers["WWW-Authenticate"] = 'Basic realm="User Visible Realm"'
+        return response

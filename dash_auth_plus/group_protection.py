@@ -4,11 +4,30 @@ from typing import Any, Callable, List, Literal, Optional, Union
 from werkzeug.routing import MapAdapter
 
 import dash
+from dash import get_app
+from dash._callback import GLOBAL_CALLBACK_MAP
 from dash.exceptions import PreventUpdate
 from flask import session, has_request_context
 from dash import html
-from inspect import Parameter, iscoroutinefunction, isawaitable, signature
+from inspect import (
+    Parameter,
+    isasyncgen,
+    isasyncgenfunction,
+    iscoroutinefunction,
+    isawaitable,
+    signature,
+)
 from functools import lru_cache
+
+from .public_routes import PUBLIC_CALLBACKS_ATTR, get_public_callbacks
+
+PROTECTED_CALLBACKS_ATTR = "_dash_auth_plus_protected_callbacks"
+
+
+def get_protected_callbacks(app: dash.Dash) -> list:
+    """Retrieve callback ids registered through protected_callback."""
+    return getattr(app, PROTECTED_CALLBACKS_ATTR, [])
+
 
 OutputVal = Union[Callable[..., Any], Any]
 CheckType = Literal["one_of", "all_of", "none_of"]
@@ -77,15 +96,38 @@ def list_groups(
         * None if the user is not authenticated
         * list[str] otherwise
     """
-    if not has_request_context() or "user" not in session:
+    user = _get_session_user()
+    if user is None:
         return None
 
-    user_groups = session.get("user", {}).get(groups_key, [])
+    user_groups = user.get(groups_key, [])
     # Handle cases where groups are ,- or ;-separated string,
     # may depend on OIDC provider
     if isinstance(user_groups, str) and groups_str_split is not None:
         user_groups = re.split(groups_str_split, user_groups)
     return user_groups
+
+
+def _get_session_user():
+    if has_request_context() and "user" in session:
+        return session.get("user")
+
+    try:
+        app = dash.get_app()
+    except Exception:
+        return None
+
+    auth = getattr(app, "_dash_auth_plus_auth", None)
+    if auth is None:
+        return None
+
+    try:
+        session_data = auth._get_session()
+    except Exception:
+        return None
+
+    user = session_data.get("user")
+    return user if isinstance(user, dict) else None
 
 
 def check_groups(
@@ -154,7 +196,8 @@ def check_groups(
     if restricted_users:
         if callable(restricted_users):
             restricted_users = restricted_users(**(restricted_users_lookup or {}))
-        if session["user"][user_session_key] in restricted_users:
+        user = _get_session_user() or {}
+        if user.get(user_session_key) in restricted_users:
             # User is restricted
             return False
     if callable(groups):
@@ -288,6 +331,58 @@ def protected(
         missing_permissions_output = unauthenticated_output
 
     def decorator(output: OutputVal):
+        if isasyncgenfunction(output):
+
+            async def async_gen_wrap(*args, **kwargs):
+                path = _kwargs.get("path_template") or _kwargs.get("path")
+                authorized = check_groups(
+                    groups=groups,
+                    groups_key=groups_key,
+                    groups_str_split=groups_str_split,
+                    check_type=check_type,
+                    group_lookup=group_lookup,
+                    runtime_lookup=kwargs,
+                    restricted_users=restricted_users,
+                    restricted_users_lookup=restricted_users_lookup,
+                    user_session_key=user_session_key,
+                    path=path,
+                )
+
+                if authorized:
+                    stream_auth_check = _kwargs.get("_stream_auth_check")
+                    stream = output(*args, **kwargs)
+                    try:
+                        async for item in stream:
+                            if (
+                                stream_auth_check is not None
+                                and not stream_auth_check()
+                            ):
+                                authorized = None
+                                break
+                            yield item
+                        else:
+                            return
+                    finally:
+                        await stream.aclose()
+
+                fallback = (
+                    _process_output(unauthenticated_output, path=path)
+                    if authorized is None
+                    else _process_output(missing_permissions_output, path=path)
+                )
+
+                if isasyncgen(fallback):
+                    async for item in fallback:
+                        yield item
+                    return
+
+                if isawaitable(fallback):
+                    fallback = await fallback
+
+                yield fallback
+
+            return async_gen_wrap
+
         if iscoroutinefunction(output):
 
             async def async_wrap(*args, **kwargs):
@@ -378,6 +473,10 @@ def protected_callback(
 ) -> Callable:
     """Protected Dash callback.
 
+    Streaming callbacks that pass the initial permission check recheck
+    authentication before each yield and stop with the unauthenticated output
+    if authentication is lost.
+
     :param **: all args and kwargs passed to a Dash callback
     :param unauthenticated_output: Output when the user is not authenticated.
         **Note**: Needs to be a function with no argument or static outputs.
@@ -419,12 +518,21 @@ def protected_callback(
     """
 
     def decorator(func):
+        is_streaming_callback = isasyncgenfunction(func)
+
         def prevent_unauthenticated():
             logging.info(
                 "A user tried to run %s without being authenticated.",
                 func.__name__,
             )
             raise PreventUpdate
+
+        def stream_prevent_unauthenticated():
+            logging.info(
+                "A user tried to run %s without being authenticated.",
+                func.__name__,
+            )
+            return dash.no_update
 
         def prevent_unauthorised():
             logging.info(
@@ -434,17 +542,48 @@ def protected_callback(
             )
             raise PreventUpdate
 
+        def stream_prevent_unauthorised():
+            logging.info(
+                "%s tried to run %s but did not have the right permissions.",
+                session["user"]["email"],
+                func.__name__,
+            )
+            return dash.no_update
+
+        default_unauthenticated_output = (
+            stream_prevent_unauthenticated
+            if is_streaming_callback
+            else prevent_unauthenticated
+        )
+        default_missing_permissions_output = (
+            stream_prevent_unauthorised
+            if is_streaming_callback
+            else prevent_unauthorised
+        )
+
+        def stream_auth_check():
+            try:
+                app = get_app()
+            except Exception:
+                return _get_session_user() is not None
+            auth = getattr(app, "_dash_auth_plus_auth", None)
+            if auth is None:
+                return _get_session_user() is not None
+            return auth.is_authorized()
+
+        before_callback_ids = set(GLOBAL_CALLBACK_MAP.keys())
+
         wrapped_func = dash.callback(*callback_args, **callback_kwargs)(
             protected(
                 unauthenticated_output=(
                     unauthenticated_output
                     if unauthenticated_output is not None
-                    else prevent_unauthenticated
+                    else default_unauthenticated_output
                 ),
                 missing_permissions_output=(
                     missing_permissions_output
                     if missing_permissions_output is not None
-                    else prevent_unauthorised
+                    else default_missing_permissions_output
                 ),
                 groups=groups,
                 groups_key=groups_key,
@@ -454,8 +593,37 @@ def protected_callback(
                 restricted_users=restricted_users,
                 restricted_users_lookup=restricted_users_lookup,
                 user_session_key=user_session_key,
+                _stream_auth_check=stream_auth_check,
             )(func)
         )
+
+        try:
+            new_callback_ids = [
+                callback_id
+                for callback_id in GLOBAL_CALLBACK_MAP.keys()
+                if callback_id not in before_callback_ids
+            ]
+            if new_callback_ids:
+                app = get_app()
+                existing = get_public_callbacks(app)
+                merged = existing + [
+                    callback_id
+                    for callback_id in new_callback_ids
+                    if callback_id not in existing
+                ]
+                setattr(app, PUBLIC_CALLBACKS_ATTR, merged)
+
+                protected_existing = get_protected_callbacks(app)
+                protected_merged = protected_existing + [
+                    callback_id
+                    for callback_id in new_callback_ids
+                    if callback_id not in protected_existing
+                ]
+                setattr(app, PROTECTED_CALLBACKS_ATTR, protected_merged)
+        except Exception:
+            logging.debug(
+                "Could not auto-register protected callback id for middleware bypass."
+            )
 
         def wrap(*args, **kwargs):
             return wrapped_func(*args, **kwargs)

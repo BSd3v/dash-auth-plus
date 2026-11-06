@@ -1,13 +1,13 @@
 import logging
 import os
 import re
-from typing import Dict, List, Optional, Union, Callable, TYPE_CHECKING
+from urllib.parse import urlparse, urlunparse
+from typing import Any, Dict, List, Optional, Union, Callable, TYPE_CHECKING
 
 import dash
 from authlib.integrations.base_client import OAuthError
 from authlib.integrations.flask_client import OAuth
 from dash_auth_plus.auth import Auth
-from flask import Response, redirect, request, session, url_for
 from werkzeug.routing import Map, Rule
 
 if TYPE_CHECKING:
@@ -30,7 +30,7 @@ class OIDCAuth(Auth):
         idp_selection_route: str = None,
         log_signins: bool = False,
         public_routes: Optional[list] = None,
-        logout_page: Union[str, Response] = None,
+        logout_page: Optional[Union[str, object]] = None,
         secure_session: bool = False,
         user_groups: Optional[Union[UserGroups, Callable[[str], List[str]]]] = None,
         login_user_callback: Callable = None,
@@ -103,6 +103,19 @@ class OIDCAuth(Auth):
         """
         if idp_selection_route:
             public_routes = [idp_selection_route, *public_routes]
+
+        supported_backends = {"flask", "fastapi"}
+        if (
+            hasattr(app, "backend")
+            and app.backend.server_type not in supported_backends
+        ):
+            raise RuntimeError(
+                "OIDCAuth requires a Flask or FastAPI backend. "
+                f"Detected backend: '{app.backend.server_type}'. "
+                "Pass a Flask/FastAPI server to Dash() or omit the `backend` "
+                "argument to use the default Flask backend."
+            )
+
         super().__init__(
             app,
             public_routes=public_routes,
@@ -128,9 +141,9 @@ class OIDCAuth(Auth):
         self.login_user_callback = login_user_callback
 
         if secret_key is not None:
-            app.server.secret_key = secret_key
+            self._set_secret_key(secret_key)
 
-        if app.server.secret_key is None:
+        if self._get_secret_key() is None:
             raise RuntimeError("""
                 app.server.secret_key is missing.
                 Generate a secret key in your Python session
@@ -147,10 +160,17 @@ class OIDCAuth(Auth):
                 """)
 
         if secure_session:
-            app.server.config["SESSION_COOKIE_SECURE"] = True
-            app.server.config["SESSION_COOKIE_HTTPONLY"] = True
+            self._set_config_value("SESSION_COOKIE_SECURE", True)
+            self._set_config_value("SESSION_COOKIE_HTTPONLY", True)
 
-        self.oauth = OAuth(app.server)
+        self._is_fastapi = getattr(app.backend, "server_type", None) == "fastapi"
+        if self._is_fastapi:
+            from authlib.integrations.starlette_client import OAuth as StarletteOAuth
+
+            self.oauth = StarletteOAuth()
+        else:
+            self.oauth = OAuth(app.server)
+        setattr(self.app, "_dash_auth_plus_oidc_oauth", self.oauth)
 
         # Check that the login and callback rules have an <idp> placeholder
         if not re.findall(r"/<idp>(?=/|$)", login_route):
@@ -158,24 +178,71 @@ class OIDCAuth(Auth):
         if not re.findall(r"/<idp>(?=/|$)", callback_route):
             raise Exception("The callback route must contain a <idp> placeholder.")
 
-        app.server.add_url_rule(
-            login_route,
-            endpoint="oidc_login",
-            view_func=self.login_request,
-            methods=["GET"],
-        )
-        app.server.add_url_rule(
-            logout_route,
-            endpoint="oidc_logout",
-            view_func=self.logout,
-            methods=["GET"],
-        )
-        app.server.add_url_rule(
-            callback_route,
-            endpoint="oidc_callback",
-            view_func=self.callback,
-            methods=["GET"],
-        )
+        if self._is_fastapi:
+            from fastapi import Request as FastAPIRequest
+            from dash.backends._fastapi import (
+                set_current_request,
+                reset_current_request,
+            )
+
+            async def login_view(idp: str, request: FastAPIRequest):
+                token = set_current_request(request)
+                try:
+                    return await self.login_request_async(idp, request)
+                finally:
+                    reset_current_request(token)
+
+            def logout_view(request: FastAPIRequest):
+                token = set_current_request(request)
+                try:
+                    return self.logout()
+                finally:
+                    reset_current_request(token)
+
+            async def callback_view(idp: str, request: FastAPIRequest):
+                token = set_current_request(request)
+                try:
+                    return await self.callback_async(idp, request)
+                finally:
+                    reset_current_request(token)
+
+            app.backend.add_url_rule(
+                login_route,
+                endpoint="oidc_login",
+                view_func=login_view,
+                methods=["GET"],
+            )
+            app.backend.add_url_rule(
+                logout_route,
+                endpoint="oidc_logout",
+                view_func=logout_view,
+                methods=["GET"],
+            )
+            app.backend.add_url_rule(
+                callback_route,
+                endpoint="oidc_callback",
+                view_func=callback_view,
+                methods=["GET"],
+            )
+        else:
+            app.backend.add_url_rule(
+                login_route,
+                endpoint="oidc_login",
+                view_func=self.login_request,
+                methods=["GET"],
+            )
+            app.backend.add_url_rule(
+                logout_route,
+                endpoint="oidc_logout",
+                view_func=self.logout,
+                methods=["GET"],
+            )
+            app.backend.add_url_rule(
+                callback_route,
+                endpoint="oidc_callback",
+                view_func=self.callback,
+                methods=["GET"],
+            )
 
     def register_provider(self, idp_name: str, **kwargs):
         """Register an OpenID Connect provider.
@@ -218,13 +285,17 @@ class OIDCAuth(Auth):
 
     def _create_redirect_uri(self, idp: str):
         """Create the redirect uri based on callback endpoint and idp."""
-        kwargs = {"_external": True}
+        req = self._get_request()
+        callback_path = self.callback_route.replace("<idp>", idp)
+        root = req.root or "/"
+        redirect_uri = root.rstrip("/") + callback_path
         if self.force_https_callback:
-            kwargs["_scheme"] = "https"
-        redirect_uri = url_for("oidc_callback", idp=idp, **kwargs)
-        if request.headers.get("X-Forwarded-Host"):
-            host = request.headers.get("X-Forwarded-Host")
-            redirect_uri = redirect_uri.replace(request.host, host, 1)
+            parsed = urlparse(redirect_uri)
+            redirect_uri = urlunparse(parsed._replace(scheme="https"))
+        if req.headers.get("X-Forwarded-Host"):
+            host = req.headers.get("X-Forwarded-Host")
+            parsed = urlparse(redirect_uri)
+            redirect_uri = urlunparse(parsed._replace(netloc=host))
         return redirect_uri
 
     def login_request(self, idp: str = None):
@@ -235,7 +306,7 @@ class OIDCAuth(Auth):
         if idp not in self.oauth._registry:
             # If a `idp_selection_route` was provided, redirect to it.
             if self.idp_selection_route:
-                return redirect(self.idp_selection_route)
+                return self._redirect_response(self.idp_selection_route)
             # If only one provider is registered, we don't need to
             # ask the user to pick one, just use the one
             if len(self.oauth._registry) == 1:
@@ -246,6 +317,10 @@ class OIDCAuth(Auth):
                     400,
                 )
 
+        if self._is_fastapi:
+            login_url = self.login_route.replace("<idp>", idp)
+            return self._redirect_response(login_url)
+
         redirect_uri = self._create_redirect_uri(idp)
         oauth_client = self.get_oauth_client(idp)
         oauth_kwargs = self.get_oauth_kwargs(idp)
@@ -254,9 +329,34 @@ class OIDCAuth(Auth):
             **oauth_kwargs.get("authorize_redirect_kwargs", {}),
         )
 
+    async def login_request_async(self, idp: str, request):
+        """Start the login process using Authlib's ASGI client."""
+        session_data = self._get_session(request)
+        request.scope["session"] = session_data
+
+        if idp not in self.oauth._registry:
+            if self.idp_selection_route:
+                return self._redirect_response(self.idp_selection_route)
+            if len(self.oauth._registry) == 1:
+                idp = next(iter(self.oauth._clients))
+            else:
+                return self.app.backend.make_response(
+                    "Several OAuth providers are registered. Please choose one.",
+                    status=400,
+                )
+
+        redirect_uri = self._create_redirect_uri(idp)
+        oauth_client = self.get_oauth_client(idp)
+        oauth_kwargs = self.get_oauth_kwargs(idp)
+        response = await oauth_client.authorize_redirect(
+            request,
+            redirect_uri,
+            **oauth_kwargs.get("authorize_redirect_kwargs", {}),
+        )
+        return self._save_session(response, session_data)
+
     def logout(self):  # pylint: disable=C0116
         """Logout the user."""
-        session.clear()
         base_url = self.app.config.get("url_base_pathname") or "/"
         page = self.logout_page or f"""
         <div style="display: flex; flex-direction: column;
@@ -265,7 +365,15 @@ class OIDCAuth(Auth):
             <div><a href="{base_url}">Go back</a></div>
         </div>
         """
-        return page
+        if isinstance(page, str):
+            response = self.app.backend.make_response(page, content_type="text/html")
+        else:
+            response = page
+        session_data = self._get_session()
+        session_data.clear()
+        self._clear_request_session()
+        self._clear_flask_session()
+        return self._clear_session(response)
 
     def callback(self, idp: str):  # pylint: disable=C0116
         """Handle the OIDC dance and post-login actions."""
@@ -284,6 +392,32 @@ class OIDCAuth(Auth):
         user = token.get("userinfo")
         return self.after_logged_in(user, idp, token)
 
+    async def callback_async(self, idp: str, request):
+        """Handle the OIDC dance using Authlib's ASGI client."""
+        if idp not in self.oauth._registry:
+            return self.app.backend.make_response(
+                f"'{idp}' is not a valid registered idp", status=400
+            )
+
+        session_data = self._get_session(request)
+        request.scope["session"] = session_data
+        oauth_client = self.get_oauth_client(idp)
+        oauth_kwargs = self.get_oauth_kwargs(idp)
+        try:
+            token = await oauth_client.authorize_access_token(
+                request,
+                **oauth_kwargs.get("authorize_token_kwargs", {}),
+            )
+        except OAuthError as err:
+            return self.app.backend.make_response(str(err), status=401)
+
+        if self.login_user_callback:
+            response = self.after_logged_in(token.get("userinfo"), idp, token)
+            if not hasattr(response, "set_cookie"):
+                response = self.app.backend.make_response(response)
+            return self._save_session(response, session_data)
+        return self.after_logged_in(token.get("userinfo"), idp, token)
+
     def after_logged_in(self, user: Optional[dict], idp: str, token: dict):
         """
         Post-login actions after successful OIDC authentication.
@@ -297,23 +431,29 @@ class OIDCAuth(Auth):
         if self.login_user_callback:
             return self.login_user_callback(user, idp)
         elif user:
-            session["user"] = user
-            session["idp"] = idp
+            session_data = self._get_session()
+            session_data["user"] = user
+            session_data["idp"] = idp
             if callable(self._user_groups):
-                session["user"]["groups"] = self._user_groups(user.get("email")) + (
-                    session["user"].get("groups") or []
-                )
+                session_data["user"]["groups"] = self._user_groups(
+                    user.get("email")
+                ) + (session_data["user"].get("groups") or [])
             elif self._user_groups:
-                session["user"]["groups"] = self._user_groups.get(
+                session_data["user"]["groups"] = self._user_groups.get(
                     user.get("email"), []
-                ) + (session["user"].get("groups") or [])
+                ) + (session_data["user"].get("groups") or [])
             oauth_scope = self.get_oauth_client(idp).client_kwargs["scope"]
             if "offline_access" in oauth_scope:
-                session["refresh_token"] = token.get("refresh_token")
+                session_data["refresh_token"] = token.get("refresh_token")
             if self.log_signins:
                 logging.info("User %s is logging in.", user.get("email"))
-
-        return redirect(self.app.config.get("url_base_pathname") or "/")
+            self._sync_flask_session(session_data)
+        response = self._redirect_response(
+            self.app.config.get("url_base_pathname") or "/"
+        )
+        if user:
+            return self._save_session(response, session_data)
+        return response
 
     def is_authorized(self):  # pylint: disable=C0116
         """Check whether ther user is authenticated."""
@@ -330,10 +470,16 @@ class OIDCAuth(Auth):
                 if x
             ]
         ).bind("")
-        return map_adapter.test(request.path) or "user" in session
+        req = self._get_request()
+        try:
+            session_data = self._get_session(req)
+        except RuntimeError:
+            logging.warning("Session is not available. Have you set a secret key?")
+            session_data = {}
+        return map_adapter.test(req.path) or "user" in session_data
 
 
-def get_oauth(app: dash.Dash = None) -> OAuth:
+def get_oauth(app: dash.Dash = None) -> Any:
     """Retrieve the OAuth object.
 
     :param app: dash.Dash
@@ -342,6 +488,10 @@ def get_oauth(app: dash.Dash = None) -> OAuth:
     """
     if app is None:
         app = dash.get_app()
+
+    oauth = getattr(app, "_dash_auth_plus_oidc_oauth", None)
+    if oauth is not None:
+        return oauth
 
     oauth = getattr(app.server, "extensions", {}).get(
         "authlib.integrations.flask_client"
