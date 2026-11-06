@@ -323,3 +323,123 @@ def test_logout_revokes_clerk_session_once(session_sid, request_sid, expected_si
     auth.logout()
 
     revoke.assert_called_once_with(session_id=expected_sid)
+
+
+def test_after_logged_in_custom_callback_persists_signed_session_cookie():
+    auth = object.__new__(ClerkAuth)
+    session_data = {"custom": "value", "user": {}}
+
+    auth._get_request = Mock(return_value=object())
+    auth._get_session = Mock(return_value=session_data)
+    auth._set_session_cookie = Mock(return_value="saved")
+    auth._redirect_response = Mock()
+    auth.log_signins = False
+    auth._user_groups = None
+
+    response_obj = SimpleNamespace(set_cookie=Mock())
+    make_response_mock = Mock(return_value=response_obj)
+    auth.app = SimpleNamespace(
+        backend=SimpleNamespace(make_response=make_response_mock)
+    )
+
+    callback_calls = []
+
+    def custom_callback(user, idp):
+        callback_calls.append((user, idp))
+        session_data["user"] = {"email": "custom@example.com", "role": "admin"}
+        return "custom-response"
+
+    auth.login_user_callback = custom_callback
+
+    user = SimpleNamespace(
+        id="u_123",
+        username="user123",
+        primary_email_address_id="e_1",
+        email_addresses=[SimpleNamespace(id="e_1", email_address="u@example.com")],
+    )
+
+    result = auth.after_logged_in(user, "sess_123")
+
+    assert result == "saved"
+    assert callback_calls == [(user, "clerk")]
+    assert session_data["sid"] == "sess_123"
+    make_response_mock.assert_called_once_with("custom-response")
+    auth._set_session_cookie.assert_called_once_with(response_obj, session_data)
+
+
+def test_after_logged_in_custom_callback_supports_three_arguments():
+    auth = object.__new__(ClerkAuth)
+    session_data = {}
+
+    auth._get_request = Mock(return_value=object())
+    auth._get_session = Mock(return_value=session_data)
+    auth._set_session_cookie = Mock(return_value="saved")
+    auth.log_signins = False
+    auth._user_groups = None
+
+    response_obj = SimpleNamespace(set_cookie=Mock())
+    auth.app = SimpleNamespace(
+        backend=SimpleNamespace(make_response=Mock(return_value=response_obj))
+    )
+
+    captured = {}
+
+    def custom_callback(user, idp, sid):
+        captured["values"] = (user, idp, sid)
+        return response_obj
+
+    auth.login_user_callback = custom_callback
+
+    user = SimpleNamespace(
+        id="u_123",
+        username="user123",
+        primary_email_address_id="e_1",
+        email_addresses=[SimpleNamespace(id="e_1", email_address="u@example.com")],
+    )
+
+    result = auth.after_logged_in(user, "sess_123")
+
+    assert result == "saved"
+    assert captured["values"] == (user, "clerk", "sess_123")
+    assert session_data["user"]["clerk_user_id"] == "u_123"
+    assert session_data["sid"] == "sess_123"
+    auth._set_session_cookie.assert_called_once_with(response_obj, session_data)
+
+
+def test_after_logged_in_custom_callback_mirrors_flask_session_user():
+    auth = object.__new__(ClerkAuth)
+    session_data = {}
+
+    auth._get_request = Mock(return_value=object())
+    auth._get_session = Mock(return_value=session_data)
+    auth._set_session_cookie = Mock(return_value="saved")
+    auth.log_signins = False
+    auth._user_groups = None
+    auth.app = SimpleNamespace(
+        backend=SimpleNamespace(make_response=Mock(return_value=SimpleNamespace(set_cookie=Mock())))
+    )
+
+    def custom_callback(_user, _idp):
+        flask.session["user"] = {
+            "email": "custom@example.com",
+            "role": "admin",
+        }
+        return "ok"
+
+    auth.login_user_callback = custom_callback
+    user = SimpleNamespace(
+        id="u_123",
+        username="user123",
+        primary_email_address_id="e_1",
+        email_addresses=[SimpleNamespace(id="e_1", email_address="u@example.com")],
+    )
+
+    flask_app = flask.Flask(__name__)
+    flask_app.secret_key = "test-secret"
+    with flask_app.test_request_context("/"):
+        result = auth.after_logged_in(user, "sess_123")
+
+    assert result == "saved"
+    assert session_data["user"]["email"] == "custom@example.com"
+    assert session_data["user"]["role"] == "admin"
+    assert session_data["sid"] == "sess_123"

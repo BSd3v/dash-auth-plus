@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import inspect
 import traceback
 from typing import Any, Dict, List, Optional, Union, Callable
 
@@ -755,9 +756,45 @@ class ClerkAuth(Auth):
         """
         req = self._get_request()
         session_data = self._get_session(req)
+        callback_response = None
+
         if self.login_user_callback:
-            return self.login_user_callback(user, "clerk", sid)
-        elif user:
+            # Backward compatible callback invocation:
+            # * legacy callbacks expect (user, idp)
+            # * newer callbacks can accept (user, idp, sid)
+            callback_signature = inspect.signature(self.login_user_callback)
+            positional = [
+                p
+                for p in callback_signature.parameters.values()
+                if p.kind
+                in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                )
+            ]
+            has_varargs = any(
+                p.kind == inspect.Parameter.VAR_POSITIONAL
+                for p in callback_signature.parameters.values()
+            )
+            if has_varargs or len(positional) >= 3:
+                callback_response = self.login_user_callback(user, "clerk", sid)
+            else:
+                callback_response = self.login_user_callback(user, "clerk")
+
+            # If callback logic wrote to Flask's session, mirror it into the
+            # signed auth session so authorization checks stay consistent.
+            try:
+                from flask import has_request_context, session as flask_session
+
+                if has_request_context():
+                    flask_user = flask_session.get("user")
+                    if isinstance(flask_user, dict):
+                        session_data["user"] = dict(flask_user)
+            except Exception:
+                pass
+
+        email = session_data.get("user", {}).get("email")
+        if user and "user" not in session_data:
             email = (
                 [
                     x.email_address
@@ -772,7 +809,11 @@ class ClerkAuth(Auth):
                 "userid": user.username,
                 "email": email,
             }
+
+        if user and sid and "sid" not in session_data:
             session_data["sid"] = sid
+
+        if user and "user" in session_data:
             if callable(self._user_groups):
                 session_data["user"]["groups"] = self._user_groups(email) + (
                     session_data["user"].get("groups") or []
@@ -785,6 +826,13 @@ class ClerkAuth(Auth):
                 logging.info(
                     "User %s is logging in.", session_data["user"].get("email")
                 )
+
+        if callback_response is not None:
+            response = callback_response
+            if not hasattr(response, "set_cookie"):
+                response = self.app.backend.make_response(response)
+            return self._set_session_cookie(response, session_data)
+
         if session_data.get("url"):
             url = session_data["url"]
             del session_data["url"]
