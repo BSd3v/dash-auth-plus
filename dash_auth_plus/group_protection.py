@@ -353,7 +353,10 @@ def protected(
                     stream = output(*args, **kwargs)
                     try:
                         async for item in stream:
-                            if stream_auth_check is not None and not stream_auth_check():
+                            if (
+                                stream_auth_check is not None
+                                and not stream_auth_check()
+                            ):
                                 authorized = None
                                 break
                             yield item
