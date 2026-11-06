@@ -409,6 +409,8 @@ class OIDCAuth(Auth):
 
         if self.login_user_callback:
             response = self.after_logged_in(token.get("userinfo"), idp, token)
+            if not hasattr(response, "set_cookie"):
+                response = self.app.backend.make_response(response)
             return self._save_session(response, session_data)
         return self.after_logged_in(token.get("userinfo"), idp, token)
 
