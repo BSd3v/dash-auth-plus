@@ -443,3 +443,51 @@ def test_after_logged_in_custom_callback_mirrors_flask_session_user():
     assert session_data["user"]["email"] == "custom@example.com"
     assert session_data["user"]["role"] == "admin"
     assert session_data["sid"] == "sess_123"
+
+
+def test_after_logged_in_refreshes_stale_identity_and_sid():
+    auth = object.__new__(ClerkAuth)
+    session_data = {
+        "user": {
+            "clerk_user_id": "old_user",
+            "userid": "old_username",
+            "email": "old@example.com",
+            "groups": ["old-group"],
+        },
+        "sid": "old_session",
+    }
+
+    auth._get_request = Mock(return_value=object())
+    auth._get_session = Mock(return_value=session_data)
+    auth._set_session_cookie = Mock(return_value="saved")
+    auth.log_signins = False
+    auth._user_groups = None
+    response_obj = SimpleNamespace(set_cookie=Mock())
+    auth.login_user_callback = Mock(return_value=response_obj)
+    auth.app = SimpleNamespace(
+        backend=SimpleNamespace(make_response=Mock(return_value=response_obj))
+    )
+
+    user = SimpleNamespace(
+        id="u_456",
+        username="new_user",
+        primary_email_address_id="e_2",
+        email_addresses=[SimpleNamespace(id="e_2", email_address="new@example.com")],
+    )
+
+    flask_app = flask.Flask(__name__)
+    flask_app.secret_key = "test-secret"
+    with flask_app.test_request_context("/"):
+        flask.session["user"] = {
+            "clerk_user_id": "old_user",
+            "email": "old@example.com",
+            "role": "admin",
+        }
+        auth.after_logged_in(user, "new_session")
+
+    assert session_data["user"] == {
+        "clerk_user_id": "u_456",
+        "userid": "new_user",
+        "email": "new@example.com",
+    }
+    assert session_data["sid"] == "new_session"

@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import inspect
+import copy
 import traceback
 from typing import Any, Dict, List, Optional, Union, Callable
 
@@ -757,8 +758,25 @@ class ClerkAuth(Auth):
         req = self._get_request()
         session_data = self._get_session(req)
         callback_response = None
+        callback_user = None
 
         if self.login_user_callback:
+            session_user_before_callback = session_data.get("user")
+            session_user_snapshot = copy.deepcopy(session_user_before_callback)
+            flask_session = None
+            flask_user_before_callback = None
+            flask_user_snapshot = None
+            try:
+                from flask import has_request_context, session as flask_session
+
+                if has_request_context():
+                    flask_user_before_callback = flask_session.get("user")
+                    flask_user_snapshot = copy.deepcopy(flask_user_before_callback)
+                else:
+                    flask_session = None
+            except Exception:
+                flask_session = None
+
             # Backward compatible callback invocation:
             # * legacy callbacks expect (user, idp)
             # * newer callbacks can accept (user, idp, sid)
@@ -781,37 +799,41 @@ class ClerkAuth(Auth):
             else:
                 callback_response = self.login_user_callback(user, "clerk")
 
-            # If callback logic wrote to Flask's session, mirror it into the
-            # signed auth session so authorization checks stay consistent.
-            try:
-                from flask import has_request_context, session as flask_session
+            flask_user = flask_session.get("user") if flask_session is not None else None
+            if isinstance(flask_user, dict) and (
+                flask_user is not flask_user_before_callback
+                or flask_user != flask_user_snapshot
+            ):
+                callback_user = dict(flask_user)
+            else:
+                session_user = session_data.get("user")
+                if isinstance(session_user, dict) and (
+                    session_user is not session_user_before_callback
+                    or session_user != session_user_snapshot
+                ):
+                    callback_user = dict(session_user)
 
-                if has_request_context():
-                    flask_user = flask_session.get("user")
-                    if isinstance(flask_user, dict):
-                        session_data["user"] = dict(flask_user)
-            except Exception:
-                pass
+        if user:
+            if callback_user is not None:
+                session_data["user"] = callback_user
+            else:
+                email = (
+                    [
+                        x.email_address
+                        for x in user.email_addresses
+                        if x.id == user.primary_email_address_id
+                    ][0]
+                    if user.email_addresses
+                    else None
+                )
+                session_data["user"] = {
+                    "clerk_user_id": user.id,
+                    "userid": user.username,
+                    "email": email,
+                }
+            session_data["sid"] = sid
 
         email = session_data.get("user", {}).get("email")
-        if user and "user" not in session_data:
-            email = (
-                [
-                    x.email_address
-                    for x in user.email_addresses
-                    if x.id == user.primary_email_address_id
-                ][0]
-                if user.email_addresses
-                else None
-            )
-            session_data["user"] = {
-                "clerk_user_id": user.id,
-                "userid": user.username,
-                "email": email,
-            }
-
-        if user and sid and "sid" not in session_data:
-            session_data["sid"] = sid
 
         if user and "user" in session_data:
             if callable(self._user_groups):
