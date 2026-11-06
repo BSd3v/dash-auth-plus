@@ -799,7 +799,9 @@ class ClerkAuth(Auth):
             else:
                 callback_response = self.login_user_callback(user, "clerk")
 
-            flask_user = flask_session.get("user") if flask_session is not None else None
+            flask_user = (
+                flask_session.get("user") if flask_session is not None else None
+            )
             if isinstance(flask_user, dict) and (
                 flask_user is not flask_user_before_callback
                 or flask_user != flask_user_snapshot
